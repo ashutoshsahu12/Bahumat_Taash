@@ -1,0 +1,325 @@
+@import "./business.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* App wrapper styles */
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #120a2e;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+
+/* ── Token base layer ───────────────────────────────────────────────────────── */
+/* Hop arc and squish are driven by JS rAF via inline `transform` on the <span>  */
+/* so no CSS animation here — only GPU-composited transform + will-change.        */
+.tk {
+  transform-origin: bottom center;
+  /* Prevents blurry sub-pixel text in tokens during scale transforms */
+  backface-visibility: hidden;
+  -webkit-font-smoothing: subpixel-antialiased;
+}
+
+/* ── Premium Solid 3D Dice Bounding Container & Transforms ────────────────────── */
+.dice-dock-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 110px;
+  height: 52px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.dice-row-viewport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  perspective: 800px;
+  perspective-origin: center;
+  width: 100%;
+  height: 44px;
+}
+
+/* Individual Die Viewport with explicit perspective */
+.die-viewport {
+  width: 36px;
+  height: 36px;
+  perspective: 800px;
+  perspective-origin: center;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The 3D Rotating Cube Container */
+.solid-cube {
+  --cube-depth: 18px; /* 18px = half of 36px cube size */
+  width: 36px;
+  height: 36px;
+  position: relative;
+  box-sizing: border-box;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.cube-tumbling {
+  transition: none !important;
+}
+
+.cube-settled {
+  transition: transform 600ms cubic-bezier(0.175, 0.885, 0.32, 1.15) !important;
+}
+
+/* Solid White 3D Cube Faces with Beveling & Inset Lighting */
+.solid-cube-face {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  background: radial-gradient(circle at 30% 30%, #ffffff 0%, #f6f3ed 65%, #e1d8cc 100%) !important;
+  box-shadow: 
+    inset 0 0 0 1px rgba(0, 0, 0, 0.15),
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.95),
+    inset 0 -1.5px 2px rgba(0, 0, 0, 0.18) !important;
+  backface-visibility: hidden !important;
+  box-sizing: border-box;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 3x3 Pip Grid Layout */
+.face-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  width: 100%;
+  height: 100%;
+}
+
+/* Embedded Deep Black Pips / Dots with Inset Shadow */
+.pip-dot {
+  width: 5.5px;
+  height: 5.5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #2a203d 0%, #0c0617 100%) !important;
+  box-shadow: 
+    inset 0 1px 1.5px rgba(0, 0, 0, 0.9),
+    0 0.5px 0.5px rgba(255, 255, 255, 0.85) !important;
+  align-self: center;
+  justify-self: center;
+  visibility: hidden;
+}
+
+.pip-dot.active {
+  visibility: visible !important;
+}
+
+/* ── All 6 Cube Faces 3D Spatial Transforms (36px width, 18px depth) ── */
+/* Face 1 (Front): Z = +18px */
+.solid-cube-face.face-1 { 
+  transform: translateZ(var(--cube-depth)) !important; 
+}
+/* Face 6 (Back): rotateY 180deg, Z = +18px */
+.solid-cube-face.face-6 { 
+  transform: rotateY(180deg) translateZ(var(--cube-depth)) !important; 
+}
+/* Face 2 (Right): rotateY 90deg, Z = +18px */
+.solid-cube-face.face-2 { 
+  transform: rotateY(90deg) translateZ(var(--cube-depth)) !important; 
+}
+/* Face 5 (Left): rotateY -90deg, Z = +18px */
+.solid-cube-face.face-5 { 
+  transform: rotateY(-90deg) translateZ(var(--cube-depth)) !important; 
+}
+/* Face 3 (Top): rotateX 90deg, Z = +18px */
+.solid-cube-face.face-3 { 
+  transform: rotateX(90deg) translateZ(var(--cube-depth)) !important; 
+}
+/* Face 4 (Bottom): rotateX -90deg, Z = +18px */
+.solid-cube-face.face-4 { 
+  transform: rotateX(-90deg) translateZ(var(--cube-depth)) !important; 
+}
+
+/* Surface Tumbling Shake Animation */
+.surface-shake {
+  animation: surfaceTumble 0.7s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes surfaceTumble {
+  0% { transform: translateY(0); }
+  25% { transform: translateY(-7px) rotate(-1deg); }
+  50% { transform: translateY(-2px) rotate(1deg); }
+  75% { transform: translateY(-5px) rotate(-0.5deg); }
+  100% { transform: translateY(0); }
+}
+
+/* Doubles Pulse & Glow Effect */
+.doubles-glow {
+  filter: drop-shadow(0 0 10px rgba(255, 200, 61, 0.6));
+}
+
+.doubles-pill-badge {
+  position: absolute;
+  top: -12px;
+  background: linear-gradient(135deg, #d97706, #b45309);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  z-index: 15;
+}
+
+
+/* ── Visual Property Ownership Badges on Tiles ───────────────────────────────── */
+.tile-owner-badge {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  animation: badgePopIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes badgePopIn {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Position based on board side orientation */
+.tile.s-bottom .tile-owner-badge {
+  top: 1px;
+  right: 1px;
+}
+
+.tile.s-top .tile-owner-badge {
+  bottom: 1px;
+  right: 1px;
+}
+
+.tile.s-left .tile-owner-badge {
+  top: 1px;
+  left: 1px;
+}
+
+.tile.s-right .tile-owner-badge {
+  top: 1px;
+  right: 1px;
+}
+
+html,
+body,
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
+.bb .screen.game-screen {
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  align-items: stretch;
+  justify-items: center;
+  gap: 6px;
+}
+
+.bb .screen.game-screen > .hudwrap {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.bb .screen.game-screen > .board-area {
+  grid-column: 1;
+  grid-row: 2;
+  place-self: center;
+  flex: none;
+  width: min(100%, 85vw, 85vh);
+  height: min(100%, 85vw, 85vh);
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  aspect-ratio: 1 / 1;
+}
+
+.bb .screen.game-screen > .game-turn-dock {
+  grid-column: 1;
+  grid-row: 3;
+  width: 100%;
+  min-width: 0;
+}
+
+.bb .screen.game-screen > .game-activity-row {
+  grid-column: 1;
+  grid-row: 4;
+  width: 100%;
+  min-width: 0;
+}
+
+.bb .game-screen .activity-feed-panel {
+  max-height: 88px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-height: 700px) {
+  .bb .screen.game-screen {
+    gap: 4px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .bb .game-screen .activity-feed-panel {
+    max-height: 68px;
+    padding: 6px;
+  }
+
+  .bb .game-screen .activity-feed-panel > div:first-child {
+    margin-bottom: 2px;
+    padding-bottom: 2px;
+  }
+}
