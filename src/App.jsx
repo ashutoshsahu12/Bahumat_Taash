@@ -41,6 +41,10 @@ export default function App() {
     room,
     setRoom,
     mySeat,
+    connectionStatus,
+    connectionError,
+    roomError,
+    setRoomError,
     turnSeat,
     turnPhase,
     isBotTurn,
@@ -74,6 +78,8 @@ export default function App() {
     setIsGameOver,
     createRoom,
     joinRoom,
+    startOfflineGame,
+    leaveRoom,
     addBot,
     kickPlayer,
     startMatch,
@@ -129,6 +135,11 @@ export default function App() {
             onNameChange={(name) => updateProfile({ name })}
             onCreateRoom={createRoom}
             onJoinRoom={joinRoom}
+            onStartOffline={startOfflineGame}
+            connectionStatus={connectionStatus}
+            connectionError={connectionError}
+            roomError={roomError}
+            onClearRoomError={() => setRoomError("")}
             onOpenWhatsNew={() => setIsWhatsNewOpen(true)}
           />
         </main>
@@ -137,7 +148,12 @@ export default function App() {
       {/* 2. LOBBY / WAITING SCREEN */}
       {screen === "lobby" && room && (
         <main className="screen form">
-          <HeaderHUD inGame={true} roomCode={room.code} onLeave={() => setScreen("setup")} />
+          <HeaderHUD inGame={true} roomCode={room.code} onLeave={leaveRoom} />
+          {(room.offline ? connectionError : connectionError || connectionStatus !== "connected") && (
+            <p className="mx-auto mt-2 w-full max-w-[420px] rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-center text-xs text-amber-200" role="status">
+              {connectionError || "Connecting to the room…"}
+            </p>
+          )}
 
           <Lobby
             room={room}
@@ -162,9 +178,14 @@ export default function App() {
               roomCode={room.code}
               round={round}
               timeLeft={formatTime(timeRemaining)}
-              onLeave={() => setScreen("setup")}
+              onLeave={leaveRoom}
             />
           </div>
+          {(room.offline ? connectionError : connectionError || connectionStatus !== "connected") && (
+            <p className="w-full rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-center text-xs text-amber-200" role="status">
+              {connectionError || "Connecting to the room…"}
+            </p>
+          )}
 
           {/* Center 48-tile Board Area */}
           <GameBoard
@@ -395,7 +416,7 @@ export default function App() {
           }}
           onBackHome={() => {
             setIsGameOver(false);
-            setScreen("setup");
+            leaveRoom();
           }}
         />
       )}    </div>

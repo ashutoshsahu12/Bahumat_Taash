@@ -19,6 +19,11 @@ export default function RoomSetup({
   onNameChange,
   onCreateRoom,
   onJoinRoom,
+  onStartOffline,
+  connectionStatus,
+  connectionError,
+  roomError,
+  onClearRoomError,
   onOpenWhatsNew,
   lastRoom = null,
   onRejoinLastRoom = null
@@ -31,6 +36,7 @@ export default function RoomSetup({
   const [roomCode, setRoomCode] = useState("");
   const [tipIndex, setTipIndex] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
   const [isPWAInstallable, setIsPWAInstallable] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
 
@@ -59,7 +65,7 @@ export default function RoomSetup({
   };
 
   const isNameValid = profile.name.trim().length > 0;
-  const isJoinValid = isNameValid && roomCode.length === 6;
+  const isJoinValid = isNameValid && /^[A-Z0-9]{6}$/.test(roomCode.trim().toUpperCase());
 
   const handleCreate = async () => {
     if (!isNameValid || isCreating) return;
@@ -72,10 +78,16 @@ export default function RoomSetup({
     }
   };
 
-  const handleJoin = () => {
-    if (!isJoinValid) return;
+  const handleJoin = async () => {
+    if (!isJoinValid || isJoining) return;
     playSound("click");
-    onJoinRoom(roomCode);
+    onClearRoomError?.();
+    setIsJoining(true);
+    try {
+      await onJoinRoom(roomCode.trim().toUpperCase());
+    } finally {
+      setIsJoining(false);
+    }
   };
 
   const initialLetter = (profile.name.trim()[0] || "?").toUpperCase();
@@ -268,7 +280,7 @@ export default function RoomSetup({
             disabled={!isNameValid || isCreating}
             onClick={handleCreate}
           >
-            {isCreating ? "Creating…" : "Create"}
+            {isCreating ? "Connecting…" : "Create"}
           </button>
         </section>
 
@@ -287,6 +299,9 @@ export default function RoomSetup({
               onChange={(e) => setRoomCode(e.target.value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase())}
             />
           </label>
+          {roomCode.length > 0 && !/^[A-Z0-9]{6}$/.test(roomCode.trim().toUpperCase()) && (
+            <p className="text-xs text-amber-200" role="status">Enter a valid 6-character room code.</p>
+          )}
           <p className="small">
             Ask your host for the 6-character code, or open the invite link they sent.
           </p>
@@ -294,13 +309,38 @@ export default function RoomSetup({
           <button
             type="button"
             className="gbtn green big"
-            disabled={!isJoinValid}
+            disabled={!isJoinValid || isJoining}
             onClick={handleJoin}
           >
-            Join
+            {isJoining ? "Connecting…" : "Join"}
           </button>
         </section>
       </div>
+
+      {roomError && (
+        <p className="mt-2 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200" role="alert">
+          {roomError}
+        </p>
+      )}
+      {connectionError && (
+        <p className="banner info mt-2" role="status">
+          {connectionError}
+        </p>
+      )}
+      {connectionStatus === "connecting" && (
+        <p className="small mt-2" role="status">Connecting to the room service…</p>
+      )}
+
+      <button
+        type="button"
+        className="gbtn blue big mt-2"
+        onClick={() => {
+          playSound("click");
+          onStartOffline({ selectedState, matchLength, missLimit });
+        }}
+      >
+        Play offline vs AI
+      </button>
 
       {isPWAInstallable && (
         <div className="install mt-2">

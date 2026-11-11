@@ -11,6 +11,7 @@ import { playSound } from "../audio/soundEngine";
 import { showToast } from "../components/Toaster";
 import { usePieceAnimation } from "./usePieceAnimation";
 import { hasFullColorSet } from "../data/checkColorSetOwnership";
+import { RoomConnection } from "../network/RoomConnection";
 
 const BOT_NAMES = ["Maya", "Rohan", "Aisha", "Vikram", "Tara", "Kabir"];
 const DICE_ROLL_DURATION_MS = 700;
@@ -30,6 +31,13 @@ export function useGameState(initialProfile) {
   const [selectedState, setSelectedState] = useState("maharashtra");
   const [room, setRoom] = useState(null);
   const [mySeat, setMySeat] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [connectionError, setConnectionError] = useState("");
+  const [roomError, setRoomError] = useState("");
+  const roomConnectionRef = useRef(null);
+  const roomSyncEnabledRef = useRef(false);
+  const lastAppliedSnapshotRef = useRef("");
+  const networkMessageHandlerRef = useRef(null);
 
   // Dynamically generated board spaces based on chosen region/state
   const boardSpaces = useMemo(() => {
@@ -140,6 +148,112 @@ export function useGameState(initialProfile) {
       }
     });
 
+  networkMessageHandlerRef.current = (message) => {
+    if (message.t === "error") {
+      setRoomError(message.message || "Room request failed.");
+      if (roomSyncEnabledRef.current) {
+        setConnectionError(message.message || "The room connection could not be restored.");
+      }
+      return;
+    }
+
+    if (!roomSyncEnabledRef.current && message.t !== "joined") return;
+
+    if (message.t === "joined") {
+      const joinedRoom = message.room;
+      if (!joinedRoom) return;
+      roomSyncEnabledRef.current = true;
+      roomConnectionRef.current?.setCredentials({ code: message.code, token: message.token });
+      setRoomError("");
+      setMySeat(message.seat);
+      setRoom({ ...joinedRoom, online: true });
+      const state = message.state;
+      if (state) applyRemoteSnapshot({ ...state, room: joinedRoom });
+      else if (joinedRoom.state) setSelectedState(joinedRoom.state);
+      setScreen(joinedRoom.started ? "game" : "lobby");
+      return;
+    }
+
+    if (message.t === "playerJoined" && message.room) {
+      setRoom({ ...message.room, online: true });
+      return;
+    }
+
+    if (message.t === "snapshot" && message.state) {
+      applyRemoteSnapshot(message.state);
+    }
+  };
+
+  const applyRemoteSnapshot = (snapshot) => {
+    const normalized = {
+      ...snapshot,
+      room: snapshot.room ? { ...snapshot.room, online: true } : snapshot.room
+    };
+    const serialized = JSON.stringify(normalized);
+    lastAppliedSnapshotRef.current = serialized;
+    roomSyncEnabledRef.current = true;
+    if (normalized.room) setRoom(normalized.room);
+    if (normalized.selectedState) setSelectedState(normalized.selectedState);
+    if (normalized.properties) setProperties(normalized.properties);
+    if (Number.isInteger(normalized.turnSeat)) setTurnSeat(normalized.turnSeat);
+    if (normalized.turnPhase) setTurnPhase(normalized.turnPhase);
+    if (normalized.dice) setDice(normalized.dice);
+    if (Number.isInteger(normalized.round)) setRound(normalized.round);
+    if (normalized.timeRemaining !== undefined) setTimeRemaining(normalized.timeRemaining);
+    if (normalized.logs) setLogs(normalized.logs);
+    if (normalized.messages) setMessages(normalized.messages);
+    if (normalized.festivals) setFestivals(normalized.festivals);
+    if (normalized.room?.started) setScreen("game");
+    else if (normalized.room) setScreen("lobby");
+  };
+
+  useEffect(() => {
+    const connection = new RoomConnection({
+      onStatusChange: (status) => {
+        setConnectionStatus(status);
+        if (status === "connected") setConnectionError("");
+        if (status === "disconnected" && roomSyncEnabledRef.current) {
+          setConnectionError("Connection lost. Reconnecting to the room…");
+        }
+      },
+      onMessage: (message) => networkMessageHandlerRef.current?.(message)
+    });
+    roomConnectionRef.current = connection;
+    return () => {
+      roomSyncEnabledRef.current = false;
+      connection.close();
+      roomConnectionRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!roomSyncEnabledRef.current || !room || !roomConnectionRef.current) return;
+    const snapshot = {
+      room,
+      selectedState,
+      properties,
+      turnSeat,
+      turnPhase,
+      dice,
+      round,
+      timeRemaining,
+      logs,
+      messages,
+      festivals
+    };
+    const serialized = JSON.stringify(snapshot);
+    if (serialized === lastAppliedSnapshotRef.current) {
+      return;
+    }
+    roomConnectionRef.current.send({ t: "sync", code: room.code, state: snapshot });
+  }, [room, selectedState, properties, turnSeat, turnPhase, dice, round, timeRemaining, logs, messages, festivals]);
+
+  useEffect(() => {
+    if (!room?.started || screen === "game") return;
+    initPositions(room.players.filter(Boolean).map((player) => ({ ...player, position: player.position || 0 })));
+    setScreen("game");
+  }, [room?.started, screen, initPositions]);
+
   // Sync profile to localStorage
   const updateProfile = (updates) => {
     setProfile((prev) => {
@@ -175,10 +289,8 @@ export function useGameState(initialProfile) {
 
   // Create room
   const createRoom = async ({ seats, matchLength, missLimit, selectedState: chosenState }) => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const code = Math.random().toString(36).slice(2, 8).padEnd(6, "0").toUpperCase();
     const stateToUse = chosenState || selectedState;
-    setSelectedState(stateToUse);
-
     const humanPlayer = {
       id: "p-0",
       seat: 0,
@@ -186,6 +298,7 @@ export function useGameState(initialProfile) {
       color: PLAYER_COLORS[0],
       token: profile.token || "pawn",
       photo: profile.photo || null,
+      isHost: true,
       isBot: false,
       cash: GAME_CONSTANTS.START_CASH,
       position: 0,
@@ -195,82 +308,169 @@ export function useGameState(initialProfile) {
       bankrupt: false
     };
 
-    const playerSlots = Array.from({ length: seats }, (_, i) => (i === 0 ? humanPlayer : null));
-
-    const newRoom = {
-      code,
-      seats,
-      minutes: matchLength,
-      missLimit,
-      state: stateToUse,
-      host: humanPlayer.name,
-      started: false,
-      over: false,
-      players: playerSlots
-    };
-
-    setRoom(newRoom);
-    setMySeat(0);
-    setScreen("lobby");
-    showToast(`Room ${code} created!`, "good");
+    setRoomError("");
+    setConnectionError("");
+    roomSyncEnabledRef.current = false;
+    roomConnectionRef.current?.setCredentials(null);
+    try {
+      const response = await roomConnectionRef.current.request({
+        t: "create",
+        seats,
+        minutes: matchLength,
+        missLimit,
+        state: stateToUse,
+        name: humanPlayer.name,
+        playerToken: humanPlayer.token,
+        photo: humanPlayer.photo
+      });
+      roomSyncEnabledRef.current = true;
+      roomConnectionRef.current.setCredentials({ code: response.code, token: response.token });
+      setSelectedState(stateToUse);
+      setRoom({ ...response.room, online: true });
+      setMySeat(response.seat);
+      setScreen("lobby");
+      showToast(`Room ${response.code} created!`, "good");
+    } catch (error) {
+      roomSyncEnabledRef.current = false;
+      setConnectionError(`${error.message} A local game is available instead.`);
+      const offlineRoom = {
+        code,
+        seats,
+        minutes: matchLength,
+        missLimit,
+        state: stateToUse,
+        host: humanPlayer.name,
+        started: false,
+        over: false,
+        offline: true,
+        players: Array.from({ length: seats }, (_, index) => index === 0 ? humanPlayer : null)
+      };
+      setSelectedState(stateToUse);
+      setRoom(offlineRoom);
+      setMySeat(0);
+      setScreen("lobby");
+      showToast("Room server unavailable. You can play locally with an AI.", "info");
+    }
   };
 
   // Join room
-  const joinRoom = (code) => {
-    if (!room || room.code !== code.toUpperCase()) {
-      const humanPlayer = {
-        id: "p-1",
-        seat: 1,
-        name: profile.name.trim() || "Guest",
-        color: PLAYER_COLORS[1],
-        token: profile.token || "crown",
-        photo: profile.photo || null,
-        isBot: false,
-        cash: GAME_CONSTANTS.START_CASH,
-        position: 0,
-        lap: 0,
-        jail: 0,
-        jailCards: 0,
-        bankrupt: false
-      };
-      const newRoom = {
-        code: code.toUpperCase(),
-        seats: 4,
-        minutes: 45,
-        missLimit: 3,
-        state: selectedState,
-        host: "Host",
-        started: false,
-        over: false,
-        players: [
-          {
-            id: "p-0",
-            seat: 0,
-            name: "Host Player",
-            color: PLAYER_COLORS[0],
-            token: "rocket",
-            cash: GAME_CONSTANTS.START_CASH,
-            position: 0,
-            lap: 0,
-            jail: 0,
-            jailCards: 0,
-            bankrupt: false
-          },
-          humanPlayer,
-          null,
-          null
-        ]
-      };
-      setRoom(newRoom);
-      setMySeat(1);
+  const joinRoom = async (rawCode) => {
+    const code = String(rawCode || "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(code)) {
+      setRoomError("Enter a valid 6-character room code.");
+      return;
     }
-    setScreen("lobby");
-    showToast(`Joined room ${code}!`, "good");
+
+    setRoomError("");
+    setConnectionError("");
+    roomSyncEnabledRef.current = false;
+    roomConnectionRef.current?.setCredentials(null);
+    try {
+      const response = await roomConnectionRef.current.request({
+        t: "join",
+        code,
+        name: profile.name.trim() || "Guest",
+        token: profile.token || "crown",
+        photo: profile.photo || null
+      });
+      roomSyncEnabledRef.current = true;
+      roomConnectionRef.current.setCredentials({ code: response.code, token: response.token });
+      setRoom({ ...response.room, online: true });
+      setMySeat(response.seat);
+      if (response.state?.selectedState) setSelectedState(response.state.selectedState);
+      else if (response.room.state) setSelectedState(response.room.state);
+      setScreen(response.room.started ? "game" : "lobby");
+      setRoomError("");
+      showToast(`Joined room ${response.code}!`, "good");
+    } catch (error) {
+      setRoomError(error.message);
+      setScreen("setup");
+    }
+  };
+
+  const startOfflineGame = ({
+    selectedState: chosenState,
+    matchLength = 45,
+    missLimit = GAME_CONSTANTS.DEFAULT_MISS_LIMIT
+  } = {}) => {
+    const stateToUse = chosenState || selectedState || "maharashtra";
+    const host = {
+      id: "p-0",
+      seat: 0,
+      name: profile.name.trim() || "Player 1",
+      color: PLAYER_COLORS[0],
+      token: profile.token || "pawn",
+      photo: profile.photo || null,
+      isHost: true,
+      isBot: false,
+      cash: GAME_CONSTANTS.START_CASH,
+      position: 0,
+      lap: 0,
+      jail: 0,
+      jailCards: 0,
+      bankrupt: false
+    };
+    const bot = {
+      id: "bot-1",
+      seat: 1,
+      name: BOT_NAMES[0],
+      color: PLAYER_COLORS[1],
+      token: TOKEN_KINDS[1],
+      photo: null,
+      isHost: false,
+      isBot: true,
+      cash: GAME_CONSTANTS.START_CASH,
+      position: 0,
+      lap: 0,
+      jail: 0,
+      jailCards: 0,
+      bankrupt: false
+    };
+
+    roomSyncEnabledRef.current = false;
+    roomConnectionRef.current?.setCredentials(null);
+    setConnectionError("");
+    setRoomError("");
+    setRoom({
+      code: "LOCAL1",
+      seats: 2,
+      minutes: matchLength,
+      missLimit,
+      state: stateToUse,
+      host: host.name,
+      started: true,
+      over: false,
+      offline: true,
+      players: [host, bot]
+    });
+    setSelectedState(stateToUse);
+    setMySeat(0);
+    setTurnSeat(0);
+    setTurnPhase("roll");
+    setRound(1);
+    setProperties({});
+    setLogs([]);
+    setMessages([]);
+    setFestivals([]);
+    setTimeRemaining(matchLength * 60);
+    setIsGameOver(false);
+    setScreen("game");
+    initPositions([host, bot]);
+    addLog(`Offline match started in ${stateToUse.toUpperCase()}! Roll the dice to begin.`, { isHighlight: true });
+  };
+
+  const leaveRoom = () => {
+    roomSyncEnabledRef.current = false;
+    roomConnectionRef.current?.setCredentials(null);
+    setRoom(null);
+    setRoomError("");
+    setConnectionError("");
+    setScreen("setup");
   };
 
   // Add AI bot to lobby
   const addBot = () => {
-    if (!room) return;
+    if (!room || mySeat !== 0) return;
     const emptyIndex = room.players.findIndex((p) => p === null);
     if (emptyIndex === -1) return;
 
@@ -284,6 +484,7 @@ export function useGameState(initialProfile) {
       token: botToken,
       photo: null,
       isBot: true,
+      isHost: false,
       cash: GAME_CONSTANTS.START_CASH,
       position: 0,
       lap: 0,
@@ -302,6 +503,7 @@ export function useGameState(initialProfile) {
 
   // Kick player
   const kickPlayer = (seatIndex) => {
+    if (!room || mySeat !== 0 || seatIndex === 0) return;
     setRoom((prev) => {
       const nextPlayers = [...prev.players];
       nextPlayers[seatIndex] = null;
@@ -311,6 +513,10 @@ export function useGameState(initialProfile) {
 
   // Start match
   const startMatch = () => {
+    if (!room || mySeat !== 0) {
+      showToast("Only the host can start the match.", "error");
+      return;
+    }
     const activePlayers = room.players.filter(Boolean);
     if (activePlayers.length < 2) {
       showToast("Need at least 2 players to start.", "error");
@@ -1310,7 +1516,8 @@ export function useGameState(initialProfile) {
   const isBotTurn = Boolean(
     screen === "game" &&
     !isGameOver &&
-    currentTurnPlayer?.isBot
+    currentTurnPlayer?.isBot &&
+    (!roomSyncEnabledRef.current || mySeat === 0)
   );
 
   // Bot turns wait for all dice and movement sequences before taking the next action.
@@ -1472,6 +1679,10 @@ export function useGameState(initialProfile) {
     room,
     setRoom,          // exposed for MarketModal onResolve in App.jsx
     mySeat,
+    connectionStatus,
+    connectionError,
+    roomError,
+    setRoomError,
     turnSeat,
     turnPhase,
     isBotTurn,
@@ -1505,6 +1716,8 @@ export function useGameState(initialProfile) {
     setIsGameOver,    // exposed so App.jsx GameOver modal can reset
     createRoom,
     joinRoom,
+    startOfflineGame,
+    leaveRoom,
     addBot,
     kickPlayer,
     startMatch,
