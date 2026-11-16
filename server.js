@@ -289,6 +289,30 @@ wss.on('connection', (ws) => {
       const room = rooms.get(code);
       if (!room || userRoomCode !== code) return;
 
+      if (data.t === 'diceRolled') {
+        const dice = data.dice;
+        const activeSeat = Number.isInteger(room.snapshot?.turnSeat) ? room.snapshot.turnSeat : 0;
+        if (!room.started ||
+          (userSeat !== activeSeat && userSeat !== 0)) {
+          sendError(data.requestId, 'Only the active player or host can broadcast a dice roll.');
+          return;
+        }
+        if (!Array.isArray(dice) || dice.length !== 2 ||
+          !dice.every((value) => Number.isInteger(value) && value >= 1 && value <= 6)) {
+          sendError(data.requestId, 'Invalid dice roll.');
+          return;
+        }
+
+        broadcastToRoom(code, {
+          t: 'diceRolled',
+          code,
+          seat: activeSeat,
+          dice,
+          rollTimestamp: Date.now()
+        }, ws);
+        return;
+      }
+
       if (data.t === 'sync') {
         if (!data.state || typeof data.state !== 'object') {
           sendError(data.requestId, 'Invalid room state update.');

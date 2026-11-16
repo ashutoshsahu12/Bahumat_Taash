@@ -21,11 +21,11 @@
  *   const anim = usePieceAnimation({ boardSize, onStepSound, onMoveDone });
  *
  *   anim.animateMove(seat, fromPos, steps)   – animate a local move and notify on landing
- *   anim.animateToPosition(seat, pos)        – queue a forward path to a remote position
+ *   anim.animateToPosition(playerId, pos)    – queue a forward path to a remote position
  *   anim.teleport(seat, pos)                 – instant snap (jail, chance)
  *   anim.initPositions(players)             – reset on match start
  *
- *   anim.visualPositions    { [seat]: number }  — tile index to render at
+ *   anim.renderedPositions  { [playerId]: number } — tile index to render at
  *   anim.activeHopState     { seat, hopY, scaleY } | null  — live transform for active token
  *   anim.isMoving           boolean
  */
@@ -62,8 +62,8 @@ export function usePieceAnimation({
   getTileCenterCoordinates,
 } = {}) {
 
-  // Per-seat tile positions (what gets rendered for all tokens)
-  const [visualPositions, setVisualPositions] = useState({});
+  // Player-ID positions are the only rendered source for token coordinates.
+  const [renderedPositions, setRenderedPositions] = useState({});
 
   // Live hop transform — only exists while ONE seat is animating
   // Shape: { seat: number, hopY: number, scaleY: number } | null
@@ -75,27 +75,32 @@ export function usePieceAnimation({
   // ── Internal refs (don't trigger renders) ───────────────────────────────────
   const rafRef    = useRef(null);  // current requestAnimationFrame handle
   const timerRef  = useRef(null);  // current setTimeout handle
-  const visualPositionsRef = useRef({});
+  const renderedPositionsRef = useRef({});
   const plannedPositionsRef = useRef({});
+  const playerKeysRef = useRef({});
+  const animatingPlayersRef = useRef({});
   const queueRef = useRef([]);
   const activeJobRef = useRef(null);
+  const animationGenerationRef = useRef(0);
 
-  const updateVisualPosition = useCallback((seat, position) => {
+  const updateRenderedPosition = useCallback((playerId, position) => {
     const normalizedPosition = ((position % boardSize) + boardSize) % boardSize;
-    visualPositionsRef.current = { ...visualPositionsRef.current, [seat]: normalizedPosition };
-    setVisualPositions(visualPositionsRef.current);
+    renderedPositionsRef.current = { ...renderedPositionsRef.current, [playerId]: normalizedPosition };
+    setRenderedPositions(renderedPositionsRef.current);
   }, [boardSize]);
 
-  const getVisualPosition = useCallback((seat) => visualPositionsRef.current[seat], []);
+  const getRenderedPosition = useCallback((playerId) => renderedPositionsRef.current[playerId], []);
 
   // ── Cancel any in-flight animation ──────────────────────────────────────────
   const cancelAll = useCallback(() => {
+    animationGenerationRef.current += 1;
     if (rafRef.current)   cancelAnimationFrame(rafRef.current);
     if (timerRef.current) clearTimeout(timerRef.current);
     rafRef.current   = null;
     timerRef.current = null;
     queueRef.current = [];
     activeJobRef.current = null;
+    animatingPlayersRef.current = {};
   }, []);
 
   // ── Squish phase: plays on landing of every hop ──────────────────────────────
@@ -125,8 +130,8 @@ export function usePieceAnimation({
   }
 
   // ── Single hop: arc from current tile to next tile position ─────────────────
-  // After arc finishes, advances visualPositions[seat] then runs squish.
-  function runHop(seat, fromPos, nextPos, dur, onHopEnd) {
+  // After arc finishes, advances renderedPositions[playerId] then runs squish.
+  function runHop(seat, playerId, fromPos, nextPos, dur, onHopEnd) {
     const start = performance.now();
     const fromCenter = getTileCenterCoordinates?.(fromPos);
     const toCenter = getTileCenterCoordinates?.(nextPos);
@@ -152,7 +157,7 @@ export function usePieceAnimation({
       } else {
         // Land on next tile — update display position
         rafRef.current = null;
-        updateVisualPosition(seat, nextPos);
+        updateRenderedPosition(playerId, nextPos);
         // Run squish then notify caller
         runSquish(seat, onHopEnd, nextPos, hasCenters ? toCenter : {});
       }
@@ -169,11 +174,19 @@ export function usePieceAnimation({
     setIsMoving(true);
 
     if (job.teleport) {
-      updateVisualPosition(job.seat, job.position);
-      setActiveHopState(null);
-      activeJobRef.current = null;
-      if (queueRef.current.length) startNextJob();
-      else setIsMoving(false);
+      const generation = animationGenerationRef.current;
+      const finishTeleport = () => {
+        if (generation !== animationGenerationRef.current) return;
+        updateRenderedPosition(job.playerId, job.position);
+        setActiveHopState(null);
+        activeJobRef.current = null;
+        animatingPlayersRef.current[job.playerId] =
+          queueRef.current.some((queuedJob) => queuedJob.playerId === job.playerId);
+        if (queueRef.current.length) startNextJob();
+        else setIsMoving(false);
+      };
+      if (job.delayMs > 0) setTimeout(finishTeleport, job.delayMs);
+      else finishTeleport();
       return;
     }
 
@@ -183,6 +196,8 @@ export function usePieceAnimation({
     function finishJob() {
       activeJobRef.current = null;
       if (job.notifyMoveDone) onMoveDone?.(job.seat, job.path[job.path.length - 1]);
+      animatingPlayersRef.current[job.playerId] =
+        queueRef.current.some((queuedJob) => queuedJob.playerId === job.playerId);
       if (queueRef.current.length) {
         startNextJob();
       } else {
@@ -195,13 +210,13 @@ export function usePieceAnimation({
       currentStep += 1;
       const nextPos = job.path[currentStep - 1];
       const previousPos = currentStep === 1
-        ? (job.fromPosition ?? visualPositionsRef.current[job.seat] ?? nextPos)
+        ? (job.fromPosition ?? renderedPositionsRef.current[job.playerId] ?? nextPos)
         : job.path[currentStep - 2];
       const isLast = currentStep === job.path.length;
 
       if (!isLast) onStepSound?.();
 
-      runHop(job.seat, previousPos, nextPos, hopDuration(currentStep - 1, job.path.length), () => {
+      runHop(job.seat, job.playerId, previousPos, nextPos, hopDuration(currentStep - 1, job.path.length), () => {
         if (isLast) {
           timerRef.current = setTimeout(finishJob, SETTLE_MS);
         } else {
@@ -214,17 +229,51 @@ export function usePieceAnimation({
       finishJob();
       return;
     }
-    doNextHop();
-  }, [onMoveDone, onStepSound, updateVisualPosition]);
 
-  const enqueuePath = useCallback((seat, path, fromPosition, notifyMoveDone = false) => {
+    if (job.stepped) {
+      const generation = animationGenerationRef.current;
+      const runSteppedPath = async () => {
+        if (job.delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, job.delayMs));
+          if (generation !== animationGenerationRef.current) return;
+        }
+        for (const nextPosition of job.path) {
+          await new Promise((resolve) => setTimeout(resolve, job.stepDelayMs));
+          if (generation !== animationGenerationRef.current) return;
+          updateRenderedPosition(job.playerId, nextPosition);
+        }
+        if (generation === animationGenerationRef.current) finishJob();
+      };
+      runSteppedPath();
+      return;
+    }
+
+    doNextHop();
+  }, [onMoveDone, onStepSound, updateRenderedPosition]);
+
+  const enqueuePath = useCallback((playerId, seat, path, fromPosition, {
+    notifyMoveDone = false,
+    stepped = false,
+    delayMs = 0,
+    stepDelayMs = 180
+  } = {}) => {
     if (!path.length) return;
     const normalizedPath = path.map((position) => ((position % boardSize) + boardSize) % boardSize);
-    queueRef.current.push({ seat, path: normalizedPath, fromPosition, notifyMoveDone });
+    queueRef.current.push({
+      playerId,
+      seat,
+      path: normalizedPath,
+      fromPosition,
+      notifyMoveDone,
+      stepped,
+      delayMs,
+      stepDelayMs
+    });
     plannedPositionsRef.current = {
       ...plannedPositionsRef.current,
-      [seat]: normalizedPath[normalizedPath.length - 1]
+      [playerId]: normalizedPath[normalizedPath.length - 1]
     };
+    animatingPlayersRef.current[playerId] = true;
     startNextJob();
   }, [boardSize, startNextJob]);
 
@@ -233,34 +282,53 @@ export function usePieceAnimation({
       onMoveDone?.(seat, fromPos % boardSize);
       return;
     }
+    const playerId = playerKeysRef.current[seat] ?? seat;
     const path = Array.from({ length: steps }, (_, index) => (fromPos + index + 1) % boardSize);
-    enqueuePath(seat, path, fromPos, true);
+    enqueuePath(playerId, seat, path, fromPos, { notifyMoveDone: true });
   }, [boardSize, enqueuePath, onMoveDone]);
 
-  const animateToPosition = useCallback((seat, targetPosition, { teleport: shouldTeleport = false } = {}) => {
+  const animateToPosition = useCallback((playerId, targetPosition, {
+    seat,
+    teleport: shouldTeleport = false,
+    delayMs = 850,
+    stepDelayMs = 180
+  } = {}) => {
     const target = ((targetPosition % boardSize) + boardSize) % boardSize;
-    const plannedPosition = plannedPositionsRef.current[seat];
-    const fromPosition = plannedPosition ?? visualPositionsRef.current[seat] ?? target;
+    const playerSeat = seat ?? playerId;
+    const plannedPosition = plannedPositionsRef.current[playerId];
+    const fromPosition = plannedPosition ?? renderedPositionsRef.current[playerId] ?? target;
     if (fromPosition === target) return;
 
     if (shouldTeleport) {
-      queueRef.current.push({ seat, teleport: true, position: target });
-      plannedPositionsRef.current = { ...plannedPositionsRef.current, [seat]: target };
+      queueRef.current.push({
+        playerId,
+        seat: playerSeat,
+        teleport: true,
+        position: target,
+        delayMs: Math.max(0, delayMs)
+      });
+      plannedPositionsRef.current = { ...plannedPositionsRef.current, [playerId]: target };
+      animatingPlayersRef.current[playerId] = true;
       startNextJob();
       return;
     }
 
     const steps = (target - fromPosition + boardSize) % boardSize;
     const path = Array.from({ length: steps }, (_, index) => (fromPosition + index + 1) % boardSize);
-    enqueuePath(seat, path, fromPosition);
+    enqueuePath(playerId, playerSeat, path, fromPosition, {
+      stepped: true,
+      delayMs,
+      stepDelayMs
+    });
   }, [boardSize, enqueuePath, startNextJob]);
 
   // ── Instant snap (Go to Jail, Chance teleport, game start) ──────────────────
   const teleport = useCallback((seat, pos) => {
+    const playerId = playerKeysRef.current[seat] ?? seat;
     const target = ((pos % boardSize) + boardSize) % boardSize;
-    plannedPositionsRef.current = { ...plannedPositionsRef.current, [seat]: target };
-    updateVisualPosition(seat, target);
-  }, [boardSize, updateVisualPosition]);
+    plannedPositionsRef.current = { ...plannedPositionsRef.current, [playerId]: target };
+    updateRenderedPosition(playerId, target);
+  }, [boardSize, updateRenderedPosition]);
 
   // ── Snap all tokens to starting positions (match start / play again) ─────────
   const initPositions = useCallback((players) => {
@@ -268,21 +336,27 @@ export function usePieceAnimation({
     setActiveHopState(null);
     setIsMoving(false);
     const positions = {};
+    const playerKeys = {};
     players.forEach((p) => {
-      if (p) positions[p.seat] = ((p.position % boardSize) + boardSize) % boardSize;
+      if (!p) return;
+      const playerId = p.id ?? p.seat;
+      positions[playerId] = ((p.position % boardSize) + boardSize) % boardSize;
+      playerKeys[p.seat] = playerId;
     });
-    visualPositionsRef.current = positions;
+    playerKeysRef.current = playerKeys;
+    renderedPositionsRef.current = positions;
     plannedPositionsRef.current = { ...positions };
-    setVisualPositions(positions);
+    setRenderedPositions(positions);
   }, [boardSize, cancelAll]);
 
   return {
-    visualPositions,
+    renderedPositions,
     activeHopState,   // { seat, hopY, scaleY } | null
     isMoving,
     animateMove,
     animateToPosition,
-    getVisualPosition,
+    getRenderedPosition,
+    animatingPlayersRef,
     teleport,
     initPositions,
   };

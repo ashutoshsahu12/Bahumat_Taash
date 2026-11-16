@@ -106,7 +106,7 @@ export default function GameBoard({
   selectedTile = null,
   isTurnResolving = false,
   isMoving = false,
-  visualPositions = {},    // { [seat]: tileIndex } — local render position, independent of server state
+  renderedPositions = {},  // { [playerId]: tileIndex } — local render position, independent of server state
   activeHopState   = null, // { seat, hopY, scaleY } | null  — only the active token
   festivals = [],
   registerTileCenterGetter,
@@ -317,7 +317,7 @@ export default function GameBoard({
             const slotMap = {};  // tileIndex → [seat, ...]
             players.forEach((p) => {
               if (!p || p.bankrupt) return;
-              const pos = (visualPositions[p.seat] ?? p.position) % boardSpaces.length;
+              const pos = (renderedPositions[p.id] ?? 0) % boardSpaces.length;
               if (!slotMap[pos]) slotMap[pos] = [];
               slotMap[pos].push(p.seat);
             });
@@ -328,7 +328,7 @@ export default function GameBoard({
               const isActive = p.seat === activeSeat;
 
               // ── Position source ────────────────────────────────────────────
-              const tilePos = (visualPositions[p.seat] ?? p.position) % boardSpaces.length;
+              const tilePos = (renderedPositions[p.id] ?? 0) % boardSpaces.length;
 
               const isInJail = tilePos === 12 && p.jail > 0;
               const { left, top } = tileToPercent(tilePos);
@@ -370,9 +370,11 @@ export default function GameBoard({
                     // Active token's left/top also transitions between tiles —
                     // the rAF arc provides the Y offset on top.
                     transition: center
-                      ? "none"
+                      ? isActive && !activeCenter
+                        ? "left 180ms ease-out, top 180ms ease-out"
+                        : "none"
                       : isActive
-                      ? "left 120ms cubic-bezier(0.25,0.46,0.45,0.94), top 120ms cubic-bezier(0.25,0.46,0.45,0.94)"
+                      ? "left 180ms ease-out, top 180ms ease-out"
                       : "left 300ms ease-out, top 300ms ease-out",
                     zIndex:  isActive ? 30 : 10,
                     // Active token gets a glow to make it pop

@@ -62,7 +62,7 @@ function DieFace({ faceNumber }) {
   );
 }
 
-export function SingleDie({ value = 1, isRolling = false, dieIndex = 0 }) {
+export function SingleDie({ value = 1, isRolling = false }) {
   const wasRolling = useRef(false);
   const currentRotation = useRef(getDieRotationAngles(value));
   const [currentTransform, setCurrentTransform] = useState(() => {
@@ -71,41 +71,19 @@ export function SingleDie({ value = 1, isRolling = false, dieIndex = 0 }) {
   });
 
   useEffect(() => {
-    let animFrame = null;
-
-    if (isRolling) {
+    if (isRolling && !wasRolling.current) {
       wasRolling.current = true;
-      const startTime = performance.now();
-      const speedMultiplier = dieIndex === 0 ? 2.5 : 2.9;
-      const startRotation = currentRotation.current;
-
-      const tumble = (now) => {
-        const elapsed = now - startTime;
-        const rotX = startRotation.x + elapsed * speedMultiplier * 1.1;
-        const rotY = startRotation.y + elapsed * speedMultiplier * 1.3;
-        const rotZ = Math.sin(elapsed * 0.02) * 12;
-
-        currentRotation.current = { x: rotX, y: rotY };
-        setCurrentTransform(`rotateX(${rotX}deg) rotateY(${rotY}deg) rotateZ(${rotZ}deg)`);
-        animFrame = requestAnimationFrame(tumble);
-      };
-
-      animFrame = requestAnimationFrame(tumble);
-    } else if (wasRolling.current) {
-      wasRolling.current = false;
       const base = TARGET_FACE_ANGLES[value] || TARGET_FACE_ANGLES[1];
       const target = {
-        x: base.x + (Math.max(2, Math.floor((Math.max(currentRotation.current.x, base.x) + 720 - base.x) / 360) + 1) * 360),
-        y: base.y + (Math.max(2, Math.floor((Math.max(currentRotation.current.y, base.y) + 720 - base.y) / 360) + 1) * 360)
+        x: base.x + (Math.max(2, Math.floor((currentRotation.current.x + 720 - base.x) / 360) + 1) * 360),
+        y: base.y + (Math.max(2, Math.floor((currentRotation.current.y + 720 - base.y) / 360) + 1) * 360)
       };
       currentRotation.current = target;
-      setCurrentTransform(`rotateX(${target.x}deg) rotateY(${target.y}deg) rotateZ(0deg)`);
+      setCurrentTransform(`rotateX(${target.x}deg) rotateY(${target.y}deg)`);
+    } else if (!isRolling && wasRolling.current) {
+      wasRolling.current = false;
     }
-
-    return () => {
-      if (animFrame) cancelAnimationFrame(animFrame);
-    };
-  }, [value, isRolling, dieIndex]);
+  }, [value, isRolling]);
 
   return (
     <div className="die-viewport">
@@ -113,7 +91,7 @@ export function SingleDie({ value = 1, isRolling = false, dieIndex = 0 }) {
         className="solid-cube"
         role="img"
         aria-label={`Die ${value}`}
-        style={{ transform: currentTransform, transition: isRolling ? "none" : undefined }}
+        style={{ transform: currentTransform }}
       >
         {/* All 6 distinct 3D cube faces */}
         {[1, 2, 3, 4, 5, 6].map((num) => (
@@ -140,8 +118,8 @@ export default function Dice3D({ dice = [1, 1], isRolling = false }) {
 
       {/* 3D Perspective Dice Pair */}
       <div className={`dice-row-viewport ${isRolling ? 'surface-shake' : ''}`}>
-        <SingleDie value={d1} isRolling={isRolling} dieIndex={0} />
-        <SingleDie value={d2} isRolling={isRolling} dieIndex={1} />
+        <SingleDie value={d1} isRolling={isRolling} />
+        <SingleDie value={d2} isRolling={isRolling} />
       </div>
     </div>
   );

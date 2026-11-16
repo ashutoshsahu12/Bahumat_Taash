@@ -53,7 +53,7 @@ export default function App() {
     isRolling,
     isTurnResolving,
     isMoving,
-    visualPositions,
+    renderedPositions,
     activeHopState,
     properties,
     round,
@@ -196,7 +196,7 @@ export default function App() {
             selectedTile={selectedTileId}
             isTurnResolving={isTurnResolving || isActionModalActive}
             isMoving={isMoving}
-            visualPositions={visualPositions}
+            renderedPositions={renderedPositions}
             activeHopState={activeHopState}
             festivals={festivals}
             onSelectTile={(id) => setSelectedTileId(id)}
