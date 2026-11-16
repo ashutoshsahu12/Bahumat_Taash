@@ -47,6 +47,7 @@ export default function App() {
     setRoomError,
     turnSeat,
     turnPhase,
+    extraRolls,
     isBotTurn,
     botStatus,
     dice,
@@ -225,7 +226,7 @@ export default function App() {
             turnPlayer={turnPlayer}
             myPlayer={myPlayer}
             players={room.players.filter(Boolean)}
-            gameState={{ turnPhase }}
+            gameState={{ turnPhase, extraRolls }}
             isBotTurn={isBotTurn}
             botStatus={botStatus}
             dice={dice}

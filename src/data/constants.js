@@ -8,7 +8,6 @@ export const GAME_CONSTANTS = {
   PCT_MIN: 50,
   JAIL_PCT: 30,
   JAIL_TRIES: 3,
-  DOUBLES_BONUS_PCT: 5,
   MAX_EXTRA_ROLLS: 2,
   MAX_HOUSES: 5, // 1 to 4 houses, 5 = hotel
   MORTGAGE_RATE: 0.5,

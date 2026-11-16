@@ -30,6 +30,7 @@ export default function RoomSetup({
 }) {
   const [tab, setTab] = useState("create"); // 'create' | 'join'
   const [selectedState, setSelectedState] = useState("maharashtra");
+  const [aiBotCount, setAiBotCount] = useState(1);
   const [seats, setSeats] = useState(4);
   const [matchLength, setMatchLength] = useState(45);
   const [missLimit, setMissLimit] = useState(GAME_CONSTANTS.DEFAULT_MISS_LIMIT);
@@ -331,15 +332,38 @@ export default function RoomSetup({
         <p className="small mt-2" role="status">Connecting to the room service…</p>
       )}
 
+      <div className="mt-2 w-full rounded-xl border border-sky-400/30 bg-[#1b0f3b] p-2.5">
+        <p className="mb-1.5 text-center text-xs font-bold text-sky-200">VS AI match size</p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {[1, 2, 3].map((botCount) => (
+            <button
+              key={botCount}
+              type="button"
+              aria-pressed={aiBotCount === botCount}
+              className={`gbtn sm flex flex-col items-center justify-center py-1.5 ${
+                aiBotCount === botCount ? "blue" : "off"
+              }`}
+              onClick={() => {
+                playSound("click");
+                setAiBotCount(botCount);
+              }}
+            >
+              <span className="font-extrabold">1v{botCount}</span>
+              <span className="text-[9px]">{botCount} {botCount === 1 ? "Bot" : "Bots"}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <button
         type="button"
         className="gbtn blue big mt-2"
         onClick={() => {
           playSound("click");
-          onStartOffline({ selectedState, matchLength, missLimit });
+          onStartOffline({ selectedState, matchLength, missLimit, botCount: aiBotCount });
         }}
       >
-        Play offline vs AI
+        Play offline vs AI (1v{aiBotCount})
       </button>
 
       {isPWAInstallable && (

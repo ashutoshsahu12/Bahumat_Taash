@@ -42,6 +42,8 @@ export default function TurnDock({
   const controlsLocked = isBotTurn || isTurnResolving || isActionModalActive || isMoving || isRolling;
   const player1 = myPlayer || players[0];
   const player2 = players.find((p) => p && p.seat !== (myPlayer?.seat ?? 0)) || players[1];
+  const activePlayers = players.filter(Boolean);
+  const usePlayerStrip = activePlayers.length > 2;
 
   // 40s Turn timer digital display countdown
   const [turnSeconds, setTurnSeconds] = useState(40);
@@ -120,13 +122,56 @@ export default function TurnDock({
       </div>
 
       {/* ─── 2. Center Roll / Turn Controls ─── */}
-      <div className="flex items-center justify-between gap-2.5 bg-[#170c36]/90 border border-purple-500/25 rounded-2xl p-2.5 shadow-2xl backdrop-blur-md">
+      <div className={`flex gap-2.5 bg-[#170c36]/90 border border-purple-500/25 rounded-2xl p-2.5 shadow-2xl backdrop-blur-md ${
+        usePlayerStrip ? "flex-col items-stretch" : "items-center justify-between"
+      }`}>
+        {usePlayerStrip && (
+          <div className="grid w-full grid-cols-2 gap-1.5">
+            {activePlayers.map((player) => {
+              const isActive = turnPlayer?.seat === player.seat;
+              const isLocal = myPlayer?.seat === player.seat;
+              return (
+                <div
+                  key={player.id || player.seat}
+                  className={`flex min-w-0 items-center gap-1.5 rounded-lg border px-1.5 py-1 transition-all ${
+                    isActive
+                      ? "border-amber-400/80 bg-amber-400/10 shadow-[0_0_10px_rgba(251,191,36,0.16)]"
+                      : "border-white/10 bg-black/25"
+                  }`}
+                >
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/20 text-xs font-extrabold text-white"
+                    style={{ backgroundColor: player.color || "#5B8DEF" }}
+                  >
+                    {player.photo ? (
+                      <img src={player.photo} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      (player.name?.[0] || "?").toUpperCase()
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[10px] font-bold leading-tight text-white">
+                      {player.name || `Player ${player.seat + 1}`}
+                      {player.isBot && <span className="ml-1 font-normal text-sky-300">(Bot)</span>}
+                      {isLocal && <span className="ml-1 font-normal text-amber-300">(you)</span>}
+                    </div>
+                    <div className="truncate font-mono text-[9px] font-bold leading-tight text-emerald-400">
+                      {formatRupee(player.cash ?? 0)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Player 1 Card (Left - Active Player) */}
-        <div className={`flex items-center gap-2 p-2 rounded-xl border transition-all flex-1 min-w-0 ${
-          isMyTurn
-            ? "border-amber-400/80 bg-amber-400/10 shadow-[0_0_12px_rgba(251,191,36,0.18)]"
-            : "border-white/10 bg-black/25"
-        }`}>
+        {!usePlayerStrip && (
+          <div className={`flex items-center gap-2 p-2 rounded-xl border transition-all flex-1 min-w-0 ${
+            isMyTurn
+              ? "border-amber-400/80 bg-amber-400/10 shadow-[0_0_12px_rgba(251,191,36,0.18)]"
+              : "border-white/10 bg-black/25"
+          }`}>
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center font-extrabold text-sm text-white shadow-md shrink-0 border border-white/20"
             style={{ backgroundColor: player1?.color || "#5B8DEF" }}
@@ -149,10 +194,13 @@ export default function TurnDock({
               </span>
             </div>
           </div>
-        </div>
+          </div>
+        )}
 
         {/* Center Roll / Turn Controls - Enforced Vertical Column with Dedicated Spacing */}
-        <div className="flex flex-col items-center justify-center gap-3 shrink-0 px-1 py-1 z-10 w-[140px]">
+        <div className={`flex flex-col items-center justify-center gap-3 shrink-0 px-1 py-1 z-10 w-[140px] ${
+          usePlayerStrip ? "self-center" : ""
+        }`}>
           {/* Turn timer digital badge */}
           <div className="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-black/60 border border-white/10 text-[10.5px] font-mono font-bold text-amber-300 shadow-sm">
             <Clock className="w-3 h-3 text-amber-400" />
@@ -163,6 +211,15 @@ export default function TurnDock({
           <div className="w-[110px] h-[52px] flex items-center justify-center relative">
             <Dice3D dice={dice} isRolling={isRolling} />
           </div>
+
+          {isMyTurn && gameState.extraRolls > 0 && !isInJail && (
+            <div
+              role="status"
+              className="rounded-full border border-amber-300/50 bg-amber-400/15 px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-200"
+            >
+              Doubles! Roll Again
+            </div>
+          )}
 
           {/* Action Roll / End Turn Button Block */}
           <div className="w-full flex justify-center">
@@ -176,14 +233,25 @@ export default function TurnDock({
                 >
                   Pay Bail
                 </button>
-                <button
-                  type="button"
-                  className="gbtn sm blue text-[10.5px] px-2 py-1"
-                  disabled={controlsLocked}
-                  onClick={onRollDice}
-                >
-                  Roll
-                </button>
+                {isMyTurn && gameState.turnPhase === "action" ? (
+                  <button
+                    type="button"
+                    className="gbtn sm gold text-[10.5px] px-2 py-1"
+                    disabled={controlsLocked}
+                    onClick={onEndTurn}
+                  >
+                    End Turn
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="gbtn sm blue text-[10.5px] px-2 py-1"
+                    disabled={!isMyTurn || controlsLocked}
+                    onClick={onRollDice}
+                  >
+                    Roll
+                  </button>
+                )}
               </div>
             ) : isMyTurn ? (
               gameState.turnPhase === "roll" ? (
@@ -222,10 +290,19 @@ export default function TurnDock({
                   type="button"
                   disabled={controlsLocked}
                   className="gbtn gold sm w-[115px] py-2 font-black uppercase tracking-wider text-xs shadow-lg flex items-center justify-center gap-1.5 active:scale-95"
-                  onClick={onEndTurn}
+                  onClick={gameState.extraRolls > 0 ? onRollDice : onEndTurn}
                 >
-                  <Check className="w-4 h-4" />
-                  END TURN
+                  {gameState.extraRolls > 0 ? (
+                    <>
+                      <Dices className="w-4 h-4" />
+                      ROLL AGAIN
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      END TURN
+                    </>
+                  )}
                 </button>
               )
             ) : (
@@ -241,11 +318,12 @@ export default function TurnDock({
         </div>
 
         {/* Player 2 Card (Right - Opponent) */}
-        <div className={`flex items-center gap-2 p-2 rounded-xl border transition-all flex-1 min-w-0 justify-end ${
-          turnPlayer?.seat === player2?.seat
-            ? "border-amber-400/80 bg-amber-400/10 shadow-[0_0_12px_rgba(251,191,36,0.18)]"
-            : "border-white/10 bg-black/25"
-        }`}>
+        {!usePlayerStrip && (
+          <div className={`flex items-center gap-2 p-2 rounded-xl border transition-all flex-1 min-w-0 justify-end ${
+            turnPlayer?.seat === player2?.seat
+              ? "border-amber-400/80 bg-amber-400/10 shadow-[0_0_12px_rgba(251,191,36,0.18)]"
+              : "border-white/10 bg-black/25"
+          }`}>
           <div className="flex flex-col min-w-0 text-right items-end">
             <span className="font-bold text-xs text-white truncate">
               {player2?.name || "Player 2"}
@@ -277,7 +355,8 @@ export default function TurnDock({
               (player2?.name?.[0] || "T").toUpperCase()
             )}
           </div>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

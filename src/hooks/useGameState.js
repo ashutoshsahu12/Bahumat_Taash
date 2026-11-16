@@ -13,7 +13,7 @@ import { usePieceAnimation } from "./usePieceAnimation";
 import { hasFullColorSet } from "../data/checkColorSetOwnership";
 import { RoomConnection } from "../network/RoomConnection";
 
-const BOT_NAMES = ["Maya", "Rohan", "Aisha", "Vikram", "Tara", "Kabir"];
+const BOT_NAMES = ["Rohan", "Priya", "Kabir", "Maya", "Aisha", "Vikram"];
 const DICE_ROLL_DURATION_MS = 850;
 const POST_ROLL_PAUSE_MS = 800;
 
@@ -50,6 +50,7 @@ export function useGameState(initialProfile) {
   // Gameplay state
   const [turnSeat, setTurnSeat] = useState(0);
   const [turnPhase, setTurnPhase] = useState("roll"); // 'roll' | 'action'
+  const [extraRolls, setExtraRolls] = useState(0);
   const [dice, setDice] = useState([1, 1]);
   const [isRolling, setIsRolling] = useState(false);
   const [isTurnResolving, setIsTurnResolving] = useState(false);
@@ -92,10 +93,19 @@ export function useGameState(initialProfile) {
   const sequenceTimersRef = useRef(new Set());
   const botTurnTimersRef = useRef(new Set());
   const botStepInProgressRef = useRef(false);
+  const consecutiveDoublesRef = useRef(0);
+  const previousTurnSeatRef = useRef(turnSeat);
   const rollDiceRef = useRef(null);
   const endTurnRef = useRef(null);
   const tileCenterGetterRef = useRef(null);
   const pendingSalaryNoticesRef = useRef(new Map());
+  useEffect(() => {
+    if (previousTurnSeatRef.current === turnSeat) return;
+    previousTurnSeatRef.current = turnSeat;
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
+  }, [turnSeat]);
+
   const getTileCenterCoordinates = useCallback(
     (tileIndex) => tileCenterGetterRef.current?.(tileIndex) ?? null,
     []
@@ -367,6 +377,8 @@ export function useGameState(initialProfile) {
   // Create room
   const createRoom = async ({ seats, matchLength, missLimit, selectedState: chosenState }) => {
     remotePositionsInitializedRef.current = false;
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
     const code = Math.random().toString(36).slice(2, 8).padEnd(6, "0").toUpperCase();
     const stateToUse = chosenState || selectedState;
     const humanPlayer = {
@@ -434,6 +446,8 @@ export function useGameState(initialProfile) {
   // Join room
   const joinRoom = async (rawCode) => {
     remotePositionsInitializedRef.current = false;
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
     const code = String(rawCode || "").trim().toUpperCase();
     if (!/^[A-Z0-9]{6}$/.test(code)) {
       setRoomError("Enter a valid 6-character room code.");
@@ -470,10 +484,14 @@ export function useGameState(initialProfile) {
   const startOfflineGame = ({
     selectedState: chosenState,
     matchLength = 45,
-    missLimit = GAME_CONSTANTS.DEFAULT_MISS_LIMIT
+    missLimit = GAME_CONSTANTS.DEFAULT_MISS_LIMIT,
+    botCount = 1
   } = {}) => {
     remotePositionsInitializedRef.current = true;
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
     const stateToUse = chosenState || selectedState || "maharashtra";
+    const activeBotCount = Math.max(1, Math.min(3, Math.floor(Number(botCount) || 1)));
     const host = {
       id: "p-0",
       seat: 0,
@@ -490,22 +508,27 @@ export function useGameState(initialProfile) {
       jailCards: 0,
       bankrupt: false
     };
-    const bot = {
-      id: "bot-1",
-      seat: 1,
-      name: BOT_NAMES[0],
-      color: PLAYER_COLORS[1],
-      token: TOKEN_KINDS[1],
-      photo: null,
-      isHost: false,
-      isBot: true,
-      cash: GAME_CONSTANTS.START_CASH,
-      position: 0,
-      lap: 0,
-      jail: 0,
-      jailCards: 0,
-      bankrupt: false
-    };
+    const botTokens = TOKEN_KINDS.filter((token) => token !== host.token);
+    const bots = Array.from({ length: activeBotCount }, (_, index) => {
+      const seat = index + 1;
+      return {
+        id: `bot-${seat}`,
+        seat,
+        name: BOT_NAMES[index],
+        color: PLAYER_COLORS[seat % PLAYER_COLORS.length],
+        token: botTokens[index],
+        photo: null,
+        isHost: false,
+        isBot: true,
+        cash: GAME_CONSTANTS.START_CASH,
+        position: 0,
+        lap: 0,
+        jail: 0,
+        jailCards: 0,
+        bankrupt: false
+      };
+    });
+    const players = [host, ...bots];
 
     roomSyncEnabledRef.current = false;
     roomConnectionRef.current?.setCredentials(null);
@@ -513,7 +536,7 @@ export function useGameState(initialProfile) {
     setRoomError("");
     setRoom({
       code: "LOCAL1",
-      seats: 2,
+      seats: players.length,
       minutes: matchLength,
       missLimit,
       state: stateToUse,
@@ -521,7 +544,7 @@ export function useGameState(initialProfile) {
       started: true,
       over: false,
       offline: true,
-      players: [host, bot]
+      players
     });
     setSelectedState(stateToUse);
     setMySeat(0);
@@ -535,12 +558,14 @@ export function useGameState(initialProfile) {
     setTimeRemaining(matchLength * 60);
     setIsGameOver(false);
     setScreen("game");
-    initPositions([host, bot]);
+    initPositions(players);
     addLog(`Offline match started in ${stateToUse.toUpperCase()}! Roll the dice to begin.`, { isHighlight: true });
   };
 
   const leaveRoom = () => {
     remotePositionsInitializedRef.current = false;
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
     roomSyncEnabledRef.current = false;
     roomConnectionRef.current?.setCredentials(null);
     setRoom(null);
@@ -607,6 +632,8 @@ export function useGameState(initialProfile) {
     setRoom((prev) => ({ ...prev, started: true }));
     setTurnSeat(0);
     setTurnPhase("roll");
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
     setRound(1);
     setProperties({});
     setActionNotices([]);
@@ -672,8 +699,10 @@ export function useGameState(initialProfile) {
 
   // Turn management: Roll Dice
   const rollDice = () => {
+    const isExtraRoll = turnPhase === "action" && consecutiveDoublesRef.current > 0;
     // Block rolling immediately if already rolling, animating, or wrong phase
-    if (isRolling || isMoving || isTurnResolving || isActionModalActive || turnPhase !== "roll") return;
+    if (isRolling || isMoving || isTurnResolving || isActionModalActive || (turnPhase !== "roll" && !isExtraRoll)) return;
+    if (isExtraRoll) setTurnPhase("roll");
 
     const d1 = Math.floor(Math.random() * 6) + 1;
     const d2 = Math.floor(Math.random() * 6) + 1;
@@ -713,10 +742,24 @@ export function useGameState(initialProfile) {
           isHighlight: isDoubles
         });
 
+        const consecutiveDoubles = isDoubles ? consecutiveDoublesRef.current + 1 : 0;
+        if (isDoubles && consecutiveDoubles > GAME_CONSTANTS.MAX_EXTRA_ROLLS) {
+          consecutiveDoublesRef.current = 0;
+          setExtraRolls(0);
+          const message = "3rd Double in a row! Move cancelled, turn ends.";
+          addLog(`${currentPlayer.name}${currentPlayer.isBot ? " (Bot)" : ""}: ${message}`, { isBad: true });
+          showToast(message, "error");
+          setIsTurnResolving(false);
+          endTurnRef.current?.();
+          return;
+        }
+        consecutiveDoublesRef.current = consecutiveDoubles;
+        setExtraRolls(consecutiveDoubles);
+        if (isDoubles) showToast("Doubles! Roll again.", "gold");
+
         // Handle Jail Release on Doubles
         if (currentPlayer.jail > 0) {
           if (isDoubles) {
-            playSound("income");
             addLog(`${currentPlayer.name}${currentPlayer.isBot ? " (Bot)" : ""} rolled doubles (${d1}+${d2}) and walked out of Jail free!`, { isGood: true });
             queueActionNotice({
               type: "jail",
@@ -726,7 +769,8 @@ export function useGameState(initialProfile) {
             });
             setRoom((prev) => {
               const next = [...prev.players];
-              next[turnSeat] = { ...currentPlayer, jail: 0 };
+              const latest = next[turnSeat] || currentPlayer;
+              next[turnSeat] = { ...latest, jail: 0 };
               return { ...prev, players: next };
             });
             movePlayer(turnSeat, sum, { ...currentPlayer, jail: 0 });
@@ -749,19 +793,6 @@ export function useGameState(initialProfile) {
             setIsTurnResolving(false);
           }
           return;
-        }
-
-        // Lucky Doubles cash bonus & visual highlight
-        if (isDoubles) {
-          const bonus = Math.max(50, Math.round(currentPlayer.cash * (GAME_CONSTANTS.DOUBLES_BONUS_PCT / 100)));
-          playSound("income");
-          showToast(`Doubles ${d1}+${d2}! +${formatRupee(bonus)} cash bonus!`, "gold");
-          addLog(`${currentPlayer.name}${currentPlayer.isBot ? " (Bot)" : ""} rolled doubles (${d1}+${d2})! Earned ${formatRupee(bonus)} bonus.`, { isGood: true });
-          setRoom((prev) => {
-            const next = [...prev.players];
-            next[turnSeat] = { ...currentPlayer, cash: currentPlayer.cash + bonus };
-            return { ...prev, players: next };
-          });
         }
 
         movePlayer(turnSeat, sum);
@@ -1444,6 +1475,23 @@ export function useGameState(initialProfile) {
   // End turn
   const endTurn = () => {
     if (isActionModalActive) return;
+    const currentPlayer = roomRef.current?.players[turnSeat];
+    if (
+      consecutiveDoublesRef.current > 0 &&
+      currentPlayer &&
+      !currentPlayer.bankrupt &&
+      currentPlayer.jail === 0
+    ) {
+      setTurnPhase("roll");
+      setSelectedTileId(null);
+      setBotStatus("");
+      botStepInProgressRef.current = false;
+      setIsTurnResolving(false);
+      return;
+    }
+
+    consecutiveDoublesRef.current = 0;
+    setExtraRolls(0);
     playSound("turn");
     setSelectedTileId(null);
     setTurnPhase("roll");
@@ -1459,7 +1507,7 @@ export function useGameState(initialProfile) {
     }
 
     const currentIndex = activeSeats.indexOf(turnSeat);
-    const nextSeat = activeSeats[(currentIndex + 1 + activeSeats.length) % activeSeats.length];
+    const nextSeat = activeSeats[(currentIndex + 1) % activeSeats.length];
     setTurnSeat(nextSeat);
 
     if (nextSeat <= turnSeat) {
@@ -1543,6 +1591,19 @@ export function useGameState(initialProfile) {
       setBotStatus("rolling");
       botStepInProgressRef.current = false;
       rollDiceRef.current?.();
+      return;
+    }
+
+    if (currentPlayer.jail > 0) {
+      setBotStatus("thinking");
+      const finishJailedBotTurn = () => {
+        if (activeActionNoticeRef.current) {
+          scheduleSequenceTimeout(finishJailedBotTurn, 150);
+        } else {
+          endTurnRef.current?.();
+        }
+      };
+      scheduleSequenceTimeout(finishJailedBotTurn, 700);
       return;
     }
 
@@ -1779,6 +1840,7 @@ export function useGameState(initialProfile) {
     setRoomError,
     turnSeat,
     turnPhase,
+    extraRolls,
     isBotTurn,
     botStatus,
     activeActionNotice,

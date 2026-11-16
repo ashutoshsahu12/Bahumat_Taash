@@ -13,10 +13,10 @@ export const UPDATES_DATA = [
   },
   {
     id: 9,
-    title: "Lucky doubles",
+    title: "Doubles: roll again",
     points: [
-      "Rolling doubles now pays a bonus: 5% of your cash, at least ₹50. Doubles that get you out of Jail count too.",
-      "The third doubles in a row still sends you to Jail, with no bonus."
+      "The first two doubles in a turn let you move and roll again, with no cash bonus.",
+      "A third consecutive double cancels the move and ends your turn."
     ]
   },
   {
