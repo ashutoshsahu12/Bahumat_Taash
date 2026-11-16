@@ -26,8 +26,8 @@ export default function Lobby({
     playSound("click");
     if (navigator.share) {
       navigator.share({
-        title: "Join Big Business Game",
-        text: `Join my Big Business room with code ${room.code}!`,
+        title: "Join Bahumat Taash",
+        text: `Join my Bahumat Taash room with code ${room.code}!`,
         url: window.location.href
       }).catch(() => {});
     } else {

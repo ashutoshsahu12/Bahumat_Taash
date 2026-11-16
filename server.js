@@ -93,7 +93,7 @@ function createRoomRecord({ code, seats, minutes, missLimit, state, name, token,
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'Big Business Game Server',
+    service: 'Bahumat Taash Game Server',
     activeRooms: rooms.size,
     timestamp: new Date().toISOString()
   });
@@ -351,6 +351,6 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Big Business Game Server running on port ${PORT}`);
+  console.log(`Bahumat Taash Game Server running on port ${PORT}`);
   console.log(`WebSocket service listening on ws://localhost:${PORT}`);
 });

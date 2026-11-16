@@ -1,6 +1,6 @@
-# Big Business - Full-Stack Functional Web Application
+# Bahumat Taash - Full-Stack Functional Web Application
 
-An exact, full-stack, responsive replication of **Big Business** (`https://business.aixellabs.in/`), a private-room property trading board game built for mobile, tablet, and desktop browsers.
+Bahumat Taash is a full-stack, responsive private-room property trading board game built for mobile, tablet, and desktop browsers.
 
 ---
 
@@ -94,7 +94,7 @@ An exact, full-stack, responsive replication of **Big Business** (`https://busin
 │   ├── hooks/
 │   │   └── useGameState.js         # Core game state & AI bot automation hook
 │   ├── styles/
-│   │   ├── business.css            # Authentic 92KB Big Business styles & keyframes
+│   │   ├── business.css            # Board game styles & keyframes
 │   │   └── index.css               # Tailwind & root resets
 │   ├── App.jsx                     # Root application container & modal router
 │   └── main.jsx                    # React entry point

@@ -238,14 +238,21 @@ export default function GameBoard({
             {/* City Skylines */}
             <SkylineArt />
 
-            {/* Big Business Centerpiece Logo */}
-            <div className="flex flex-col items-center select-none pointer-events-none drop-shadow-lg mb-2">
-              <LogoCrown style={{ width: "calc(20 * var(--u))", height: "calc(13.75 * var(--u))" }} />
+            {/* Bahumat Taash Centerpiece Logo */}
+            <div
+              className="flex flex-col items-center justify-center gap-[10px] text-center select-none pointer-events-none drop-shadow-lg"
+            >
+              <LogoCrown
+                className="block shrink-0"
+                viewBox="0 0 64 42.3"
+                style={{ width: "calc(20 * var(--u))", height: "calc(13.21875 * var(--u))" }}
+              />
               <div
-                className="font-extrabold uppercase tracking-widest text-amber-300"
+                className="flex flex-col font-extrabold uppercase leading-none tracking-widest text-amber-300"
                 style={{ fontSize: "calc(6.25 * var(--u))" }}
               >
-                Big Business
+                <span>Bahumat</span>
+                <span>Taash</span>
               </div>
             </div>
 

@@ -1,4 +1,4 @@
-// Authentic Big Business Web Audio API Synthesizer and Music Engine
+// Bahumat Taash Web Audio API Synthesizer and Music Engine
 
 let audioCtx = null;
 let musicInterval = null;

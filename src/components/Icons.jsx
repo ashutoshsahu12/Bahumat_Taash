@@ -47,9 +47,9 @@ export const BOARD_ICONS = {
   "circle-help": CircleHelp
 };
 
-export function LogoCrown({ className = "" }) {
+export function LogoCrown({ className = "", style, viewBox = "0 0 64 44" }) {
   return (
-    <svg className={`crown ${className}`} viewBox="0 0 64 44" aria-hidden="true">
+    <svg className={`crown ${className}`} style={style} viewBox={viewBox} aria-hidden="true">
       <defs>
         <linearGradient id="bb-crown" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#FFE98A" />
@@ -87,8 +87,8 @@ export function Logo({ className = "" }) {
   return (
     <div className={`logo ${className}`}>
       <LogoCrown />
-      <span>Big</span>
-      <span>Business</span>
+      <span>Bahumat</span>
+      <span>Taash</span>
     </div>
   );
 }
