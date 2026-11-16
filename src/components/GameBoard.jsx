@@ -106,7 +106,7 @@ export default function GameBoard({
   selectedTile = null,
   isTurnResolving = false,
   isMoving = false,
-  displayPositions = {},   // { [seat]: tileIndex }
+  visualPositions = {},    // { [seat]: tileIndex } — local render position, independent of server state
   activeHopState   = null, // { seat, hopY, scaleY } | null  — only the active token
   festivals = [],
   registerTileCenterGetter,
@@ -317,11 +317,7 @@ export default function GameBoard({
             const slotMap = {};  // tileIndex → [seat, ...]
             players.forEach((p) => {
               if (!p || p.bankrupt) return;
-              // Stationary tokens use logical position; active uses display
-              const pos =
-                p.seat === activeSeat
-                  ? (displayPositions[p.seat] ?? p.position) % boardSpaces.length
-                  : p.position % boardSpaces.length;
+              const pos = (visualPositions[p.seat] ?? p.position) % boardSpaces.length;
               if (!slotMap[pos]) slotMap[pos] = [];
               slotMap[pos].push(p.seat);
             });
@@ -332,9 +328,7 @@ export default function GameBoard({
               const isActive = p.seat === activeSeat;
 
               // ── Position source ────────────────────────────────────────────
-              const tilePos = isActive
-                ? (displayPositions[p.seat] ?? p.position) % boardSpaces.length
-                : p.position % boardSpaces.length;
+              const tilePos = (visualPositions[p.seat] ?? p.position) % boardSpaces.length;
 
               const isInJail = tilePos === 12 && p.jail > 0;
               const { left, top } = tileToPercent(tilePos);

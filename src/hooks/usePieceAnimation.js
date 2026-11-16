@@ -3,8 +3,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Responsibilities
  * ────────────────
- * • Only the ACTIVE player's token is ever animated.  Inactive tokens sit still
- *   at their logical positions — no state churn, no spurious re-renders.
+ * • Tokens render from local visual positions, independently of logical/network
+ *   positions. Animation jobs are serialized so remote moves can queue safely.
  *
  * • Each hop between adjacent tiles goes through four sub-phases driven by
  *   requestAnimationFrame, keeping the hop tight to the actual frame loop:
@@ -20,11 +20,12 @@
  * ───
  *   const anim = usePieceAnimation({ boardSize, onStepSound, onMoveDone });
  *
- *   anim.animateMove(seat, fromPos, steps)   – start animation for active token
+ *   anim.animateMove(seat, fromPos, steps)   – animate a local move and notify on landing
+ *   anim.animateToPosition(seat, pos)        – queue a forward path to a remote position
  *   anim.teleport(seat, pos)                 – instant snap (jail, chance)
  *   anim.initPositions(players)             – reset on match start
  *
- *   anim.displayPositions   { [seat]: number }  — tile index to render at
+ *   anim.visualPositions    { [seat]: number }  — tile index to render at
  *   anim.activeHopState     { seat, hopY, scaleY } | null  — live transform for active token
  *   anim.isMoving           boolean
  */
@@ -62,7 +63,7 @@ export function usePieceAnimation({
 } = {}) {
 
   // Per-seat tile positions (what gets rendered for all tokens)
-  const [displayPositions, setDisplayPositions] = useState({});
+  const [visualPositions, setVisualPositions] = useState({});
 
   // Live hop transform — only exists while ONE seat is animating
   // Shape: { seat: number, hopY: number, scaleY: number } | null
@@ -74,7 +75,18 @@ export function usePieceAnimation({
   // ── Internal refs (don't trigger renders) ───────────────────────────────────
   const rafRef    = useRef(null);  // current requestAnimationFrame handle
   const timerRef  = useRef(null);  // current setTimeout handle
-  const stateRef  = useRef(null);  // { seat, fromPos, steps, currentStep, startTime, hopDur }
+  const visualPositionsRef = useRef({});
+  const plannedPositionsRef = useRef({});
+  const queueRef = useRef([]);
+  const activeJobRef = useRef(null);
+
+  const updateVisualPosition = useCallback((seat, position) => {
+    const normalizedPosition = ((position % boardSize) + boardSize) % boardSize;
+    visualPositionsRef.current = { ...visualPositionsRef.current, [seat]: normalizedPosition };
+    setVisualPositions(visualPositionsRef.current);
+  }, [boardSize]);
+
+  const getVisualPosition = useCallback((seat) => visualPositionsRef.current[seat], []);
 
   // ── Cancel any in-flight animation ──────────────────────────────────────────
   const cancelAll = useCallback(() => {
@@ -82,7 +94,8 @@ export function usePieceAnimation({
     if (timerRef.current) clearTimeout(timerRef.current);
     rafRef.current   = null;
     timerRef.current = null;
-    stateRef.current = null;
+    queueRef.current = [];
+    activeJobRef.current = null;
   }, []);
 
   // ── Squish phase: plays on landing of every hop ──────────────────────────────
@@ -112,7 +125,7 @@ export function usePieceAnimation({
   }
 
   // ── Single hop: arc from current tile to next tile position ─────────────────
-  // After arc finishes, advances displayPositions[seat] then runs squish.
+  // After arc finishes, advances visualPositions[seat] then runs squish.
   function runHop(seat, fromPos, nextPos, dur, onHopEnd) {
     const start = performance.now();
     const fromCenter = getTileCenterCoordinates?.(fromPos);
@@ -139,7 +152,7 @@ export function usePieceAnimation({
       } else {
         // Land on next tile — update display position
         rafRef.current = null;
-        setDisplayPositions((prev) => ({ ...prev, [seat]: nextPos }));
+        updateVisualPosition(seat, nextPos);
         // Run squish then notify caller
         runSquish(seat, onHopEnd, nextPos, hasCenters ? toCenter : {});
       }
@@ -148,54 +161,106 @@ export function usePieceAnimation({
   }
 
   // ── Main sequence controller ─────────────────────────────────────────────────
-  const animateMove = useCallback((seat, fromPos, steps) => {
-    cancelAll();
+  const startNextJob = useCallback(() => {
+    if (activeJobRef.current || queueRef.current.length === 0) return;
 
-    if (steps <= 0) {
-      onMoveDone?.(seat, fromPos % boardSize);
+    const job = queueRef.current.shift();
+    activeJobRef.current = job;
+    setIsMoving(true);
+
+    if (job.teleport) {
+      updateVisualPosition(job.seat, job.position);
+      setActiveHopState(null);
+      activeJobRef.current = null;
+      if (queueRef.current.length) startNextJob();
+      else setIsMoving(false);
       return;
     }
 
-    setIsMoving(true);
-    setActiveHopState({ seat, hopY: 0, scaleY: 1 });
-
+    setActiveHopState({ seat: job.seat, hopY: 0, scaleY: 1 });
     let currentStep = 0;
+
+    function finishJob() {
+      activeJobRef.current = null;
+      if (job.notifyMoveDone) onMoveDone?.(job.seat, job.path[job.path.length - 1]);
+      if (queueRef.current.length) {
+        startNextJob();
+      } else {
+        setActiveHopState(null);
+        setIsMoving(false);
+      }
+    }
 
     function doNextHop() {
       currentStep += 1;
-      const nextPos = (fromPos + currentStep) % boardSize;
-      const dur     = hopDuration(currentStep - 1, steps);
-      const isLast  = currentStep === steps;
+      const nextPos = job.path[currentStep - 1];
+      const previousPos = currentStep === 1
+        ? (job.fromPosition ?? visualPositionsRef.current[job.seat] ?? nextPos)
+        : job.path[currentStep - 2];
+      const isLast = currentStep === job.path.length;
 
-      // Play step tick on every hop except the final landing
       if (!isLast) onStepSound?.();
 
-      runHop(seat, (fromPos + currentStep - 1) % boardSize, nextPos, dur, () => {
+      runHop(job.seat, previousPos, nextPos, hopDuration(currentStep - 1, job.path.length), () => {
         if (isLast) {
-          // Finished — clear active hop state, unlock input, fire tile action
-          timerRef.current = setTimeout(() => {
-            setActiveHopState(null);
-            setIsMoving(false);
-            onMoveDone?.(seat, nextPos);
-          }, SETTLE_MS);
+          timerRef.current = setTimeout(finishJob, SETTLE_MS);
         } else {
-          // Schedule next hop after a tiny gap so the squish is visible
           timerRef.current = setTimeout(doNextHop, 30);
         }
       });
     }
 
-    // Kick off immediately
+    if (job.path.length === 0) {
+      finishJob();
+      return;
+    }
     doNextHop();
-  }, [boardSize, cancelAll, getTileCenterCoordinates, onStepSound, onMoveDone]);
+  }, [onMoveDone, onStepSound, updateVisualPosition]);
+
+  const enqueuePath = useCallback((seat, path, fromPosition, notifyMoveDone = false) => {
+    if (!path.length) return;
+    const normalizedPath = path.map((position) => ((position % boardSize) + boardSize) % boardSize);
+    queueRef.current.push({ seat, path: normalizedPath, fromPosition, notifyMoveDone });
+    plannedPositionsRef.current = {
+      ...plannedPositionsRef.current,
+      [seat]: normalizedPath[normalizedPath.length - 1]
+    };
+    startNextJob();
+  }, [boardSize, startNextJob]);
+
+  const animateMove = useCallback((seat, fromPos, steps) => {
+    if (steps <= 0) {
+      onMoveDone?.(seat, fromPos % boardSize);
+      return;
+    }
+    const path = Array.from({ length: steps }, (_, index) => (fromPos + index + 1) % boardSize);
+    enqueuePath(seat, path, fromPos, true);
+  }, [boardSize, enqueuePath, onMoveDone]);
+
+  const animateToPosition = useCallback((seat, targetPosition, { teleport: shouldTeleport = false } = {}) => {
+    const target = ((targetPosition % boardSize) + boardSize) % boardSize;
+    const plannedPosition = plannedPositionsRef.current[seat];
+    const fromPosition = plannedPosition ?? visualPositionsRef.current[seat] ?? target;
+    if (fromPosition === target) return;
+
+    if (shouldTeleport) {
+      queueRef.current.push({ seat, teleport: true, position: target });
+      plannedPositionsRef.current = { ...plannedPositionsRef.current, [seat]: target };
+      startNextJob();
+      return;
+    }
+
+    const steps = (target - fromPosition + boardSize) % boardSize;
+    const path = Array.from({ length: steps }, (_, index) => (fromPosition + index + 1) % boardSize);
+    enqueuePath(seat, path, fromPosition);
+  }, [boardSize, enqueuePath, startNextJob]);
 
   // ── Instant snap (Go to Jail, Chance teleport, game start) ──────────────────
   const teleport = useCallback((seat, pos) => {
-    cancelAll();
-    setActiveHopState(null);
-    setIsMoving(false);
-    setDisplayPositions((prev) => ({ ...prev, [seat]: pos % boardSize }));
-  }, [boardSize, cancelAll]);
+    const target = ((pos % boardSize) + boardSize) % boardSize;
+    plannedPositionsRef.current = { ...plannedPositionsRef.current, [seat]: target };
+    updateVisualPosition(seat, target);
+  }, [boardSize, updateVisualPosition]);
 
   // ── Snap all tokens to starting positions (match start / play again) ─────────
   const initPositions = useCallback((players) => {
@@ -203,15 +268,21 @@ export function usePieceAnimation({
     setActiveHopState(null);
     setIsMoving(false);
     const positions = {};
-    players.forEach((p) => { if (p) positions[p.seat] = p.position; });
-    setDisplayPositions(positions);
-  }, [cancelAll]);
+    players.forEach((p) => {
+      if (p) positions[p.seat] = ((p.position % boardSize) + boardSize) % boardSize;
+    });
+    visualPositionsRef.current = positions;
+    plannedPositionsRef.current = { ...positions };
+    setVisualPositions(positions);
+  }, [boardSize, cancelAll]);
 
   return {
-    displayPositions,
+    visualPositions,
     activeHopState,   // { seat, hopY, scaleY } | null
     isMoving,
     animateMove,
+    animateToPosition,
+    getVisualPosition,
     teleport,
     initPositions,
   };

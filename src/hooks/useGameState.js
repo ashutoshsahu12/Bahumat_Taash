@@ -15,7 +15,7 @@ import { RoomConnection } from "../network/RoomConnection";
 
 const BOT_NAMES = ["Maya", "Rohan", "Aisha", "Vikram", "Tara", "Kabir"];
 const DICE_ROLL_DURATION_MS = 700;
-const DICE_LAND_TRANSITION_MS = 600;
+const DICE_LAND_TRANSITION_MS = 850;
 const POST_ROLL_PAUSE_MS = 800;
 
 export function useGameState(initialProfile) {
@@ -38,6 +38,7 @@ export function useGameState(initialProfile) {
   const roomSyncEnabledRef = useRef(false);
   const lastAppliedSnapshotRef = useRef("");
   const networkMessageHandlerRef = useRef(null);
+  const remotePositionsInitializedRef = useRef(false);
 
   // Dynamically generated board spaces based on chosen region/state
   const boardSpaces = useMemo(() => {
@@ -129,7 +130,16 @@ export function useGameState(initialProfile) {
   }, []);
 
   // ─── Piece Animation Hook ─────────────────────────────────────────────────
-  const { displayPositions, activeHopState, isMoving, animateMove, teleport, initPositions } =
+  const {
+    visualPositions,
+    activeHopState,
+    isMoving,
+    animateMove,
+    animateToPosition,
+    getVisualPosition,
+    teleport,
+    initPositions
+  } =
     usePieceAnimation({
       boardSize: 48,
       onStepSound: () => playSound("step"),
@@ -147,6 +157,16 @@ export function useGameState(initialProfile) {
         }
       }
     });
+  const isMovingRef = useRef(isMoving);
+  const deferredActionNoticesRef = useRef([]);
+  isMovingRef.current = isMoving;
+
+  useEffect(() => {
+    if (isMoving || deferredActionNoticesRef.current.length === 0) return;
+    const pendingNotices = deferredActionNoticesRef.current;
+    deferredActionNoticesRef.current = [];
+    setActionNotices((previous) => [...previous, ...pendingNotices]);
+  }, [isMoving]);
 
   networkMessageHandlerRef.current = (message) => {
     if (message.t === "error") {
@@ -192,7 +212,27 @@ export function useGameState(initialProfile) {
     const serialized = JSON.stringify(normalized);
     lastAppliedSnapshotRef.current = serialized;
     roomSyncEnabledRef.current = true;
-    if (normalized.room) setRoom(normalized.room);
+    if (normalized.room) {
+      const remotePlayers = normalized.room.players?.filter(Boolean) || [];
+      if (normalized.room.started && !remotePositionsInitializedRef.current) {
+        initPositions(remotePlayers);
+        remotePositionsInitializedRef.current = true;
+      } else if (normalized.room.started) {
+        remotePlayers.forEach((player) => {
+          const boardSize = boardSpacesRef.current.length || 48;
+          const targetPosition = ((player.position % boardSize) + boardSize) % boardSize;
+          const visualPosition = getVisualPosition(player.seat);
+          if (visualPosition === undefined) return;
+          if (visualPosition === targetPosition) return;
+
+          // A jail state is a direct relocation, not a forward board traversal.
+          animateToPosition(player.seat, targetPosition, {
+            teleport: targetPosition === 12 && player.jail > 0
+          });
+        });
+      }
+      setRoom(normalized.room);
+    }
     if (normalized.selectedState) setSelectedState(normalized.selectedState);
     if (normalized.properties) setProperties(normalized.properties);
     if (Number.isInteger(normalized.turnSeat)) setTurnSeat(normalized.turnSeat);
@@ -251,6 +291,7 @@ export function useGameState(initialProfile) {
   useEffect(() => {
     if (!room?.started || screen === "game") return;
     initPositions(room.players.filter(Boolean).map((player) => ({ ...player, position: player.position || 0 })));
+    remotePositionsInitializedRef.current = true;
     setScreen("game");
   }, [room?.started, screen, initPositions]);
 
@@ -276,10 +317,17 @@ export function useGameState(initialProfile) {
   const queueActionNotice = useCallback((notice) => {
     const seat = notice.seat;
     const isBot = seat !== undefined && Boolean(roomRef.current?.players[seat]?.isBot);
-    setActionNotices((previous) => [
-      ...previous,
-      { ...notice, id: ++actionNoticeIdRef.current, isBot, autoDismissMs: isBot ? 1350 : null }
-    ]);
+    const queuedNotice = {
+      ...notice,
+      id: ++actionNoticeIdRef.current,
+      isBot,
+      autoDismissMs: isBot ? 1350 : null
+    };
+    if (isMovingRef.current) {
+      deferredActionNoticesRef.current.push(queuedNotice);
+      return;
+    }
+    setActionNotices((previous) => [...previous, queuedNotice]);
   }, []);
 
   const dismissActionNotice = useCallback(() => {
@@ -289,6 +337,7 @@ export function useGameState(initialProfile) {
 
   // Create room
   const createRoom = async ({ seats, matchLength, missLimit, selectedState: chosenState }) => {
+    remotePositionsInitializedRef.current = false;
     const code = Math.random().toString(36).slice(2, 8).padEnd(6, "0").toUpperCase();
     const stateToUse = chosenState || selectedState;
     const humanPlayer = {
@@ -355,6 +404,7 @@ export function useGameState(initialProfile) {
 
   // Join room
   const joinRoom = async (rawCode) => {
+    remotePositionsInitializedRef.current = false;
     const code = String(rawCode || "").trim().toUpperCase();
     if (!/^[A-Z0-9]{6}$/.test(code)) {
       setRoomError("Enter a valid 6-character room code.");
@@ -393,6 +443,7 @@ export function useGameState(initialProfile) {
     matchLength = 45,
     missLimit = GAME_CONSTANTS.DEFAULT_MISS_LIMIT
   } = {}) => {
+    remotePositionsInitializedRef.current = true;
     const stateToUse = chosenState || selectedState || "maharashtra";
     const host = {
       id: "p-0",
@@ -460,6 +511,7 @@ export function useGameState(initialProfile) {
   };
 
   const leaveRoom = () => {
+    remotePositionsInitializedRef.current = false;
     roomSyncEnabledRef.current = false;
     roomConnectionRef.current?.setCredentials(null);
     setRoom(null);
@@ -542,6 +594,7 @@ export function useGameState(initialProfile) {
 
     // Snap all tokens to position 0 (no animation on match start)
     initPositions(activePlayers.map((p) => ({ ...p, position: 0 })));
+    remotePositionsInitializedRef.current = true;
 
     if (room.minutes > 0) {
       setTimeRemaining(room.minutes * 60);
@@ -1696,7 +1749,7 @@ export function useGameState(initialProfile) {
     isRolling,
     isTurnResolving,
     isMoving,         // true while piece is animating
-    displayPositions, // { [seat]: tileIndex } for animated rendering
+    visualPositions, // { [seat]: tileIndex } used for all rendered token positions
     activeHopState,   // { seat, hopY, scaleY } | null — live arc for active token
     properties,
     round,
