@@ -14,7 +14,8 @@ import { hasFullColorSet } from "../data/checkColorSetOwnership";
 import { RoomConnection } from "../network/RoomConnection";
 
 const BOT_NAMES = ["Rohan", "Priya", "Kabir", "Maya", "Aisha", "Vikram"];
-const DICE_ROLL_DURATION_MS = 850;
+const DICE_ROLL_DURATION_MS = 800;
+const REMOTE_MOVE_DELAY_MS = 850;
 const POST_ROLL_PAUSE_MS = 800;
 
 export function useGameState(initialProfile) {
@@ -36,11 +37,14 @@ export function useGameState(initialProfile) {
   const roomConnectionRef = useRef(null);
   const roomSyncEnabledRef = useRef(false);
   const lastAppliedSnapshotRef = useRef("");
+  const lastAppliedVersionRef = useRef(0);
+  const pendingActionRef = useRef(null);
   const networkMessageHandlerRef = useRef(null);
   const remotePositionsInitializedRef = useRef(false);
-  const lastDiceRollTimestampRef = useRef(0);
+  const seenRollIdsRef = useRef(new Set());
   const remoteRollAnimationEndsAtRef = useRef(0);
   const remoteDiceRollTimerRef = useRef(null);
+  const rollIdRef = useRef(0);
 
   // Dynamically generated board spaces based on chosen region/state
   const boardSpaces = useMemo(() => {
@@ -144,13 +148,13 @@ export function useGameState(initialProfile) {
 
   // ─── Piece Animation Hook ─────────────────────────────────────────────────
   const {
-    renderedPositions,
+    visualPositions,
     activeHopState,
     isMoving,
     animateMove,
     animateToPosition,
     getRenderedPosition,
-    animatingPlayersRef,
+    isAnimatingRef,
     teleport,
     initPositions
   } =
@@ -190,7 +194,7 @@ export function useGameState(initialProfile) {
       const targetPosition = ((player.position % boardSize) + boardSize) % boardSize;
       const visualPosition = getRenderedPosition(player.id);
       if (visualPosition === undefined) return;
-      if (visualPosition === targetPosition && !animatingPlayersRef.current[player.id]) return;
+      if (visualPosition === targetPosition || isAnimatingRef.current[player.id]) return;
 
       animateToPosition(player.id, targetPosition, {
         seat: player.seat,
@@ -198,7 +202,29 @@ export function useGameState(initialProfile) {
         teleport: targetPosition === 12 && player.jail > 0
       });
     });
-  }, [room?.players, room?.started, renderedPositions, animateToPosition, getRenderedPosition, animatingPlayersRef]);
+  }, [room?.players, room?.started, visualPositions, animateToPosition, getRenderedPosition, isAnimatingRef]);
+
+  const triggerDiceRollAnimation = (message) => {
+    if (typeof message.rollId !== "string" || seenRollIdsRef.current.has(message.rollId)) return;
+    if (!Array.isArray(message.dice) || message.dice.length !== 2 ||
+      !message.dice.every((value) => Number.isInteger(value) && value >= 1 && value <= 6)) {
+      return;
+    }
+
+    seenRollIdsRef.current.add(message.rollId);
+    if (seenRollIdsRef.current.size > 100) {
+      const oldestRollId = seenRollIdsRef.current.values().next().value;
+      seenRollIdsRef.current.delete(oldestRollId);
+    }
+    remoteRollAnimationEndsAtRef.current = Date.now() + REMOTE_MOVE_DELAY_MS;
+    setDice(message.dice);
+    setIsRolling(true);
+    clearTimeout(remoteDiceRollTimerRef.current);
+    remoteDiceRollTimerRef.current = setTimeout(() => {
+      setIsRolling(false);
+      remoteDiceRollTimerRef.current = null;
+    }, DICE_ROLL_DURATION_MS);
+  };
 
   networkMessageHandlerRef.current = (message) => {
     if (message.t === "error") {
@@ -214,6 +240,9 @@ export function useGameState(initialProfile) {
     if (message.t === "joined") {
       const joinedRoom = message.room;
       if (!joinedRoom) return;
+      lastAppliedVersionRef.current = 0;
+      lastAppliedSnapshotRef.current = "";
+      pendingActionRef.current = null;
       roomSyncEnabledRef.current = true;
       roomConnectionRef.current?.setCredentials({ code: message.code, token: message.token });
       setRoomError("");
@@ -231,23 +260,8 @@ export function useGameState(initialProfile) {
       return;
     }
 
-    if (message.t === "diceRolled") {
-      if (!Array.isArray(message.dice) || message.dice.length !== 2 ||
-        !message.dice.every((value) => Number.isInteger(value) && value >= 1 && value <= 6) ||
-        !Number.isFinite(message.rollTimestamp) ||
-        message.rollTimestamp <= lastDiceRollTimestampRef.current) {
-        return;
-      }
-
-      lastDiceRollTimestampRef.current = message.rollTimestamp;
-      remoteRollAnimationEndsAtRef.current = Date.now() + DICE_ROLL_DURATION_MS;
-      setDice(message.dice);
-      setIsRolling(true);
-      clearTimeout(remoteDiceRollTimerRef.current);
-      remoteDiceRollTimerRef.current = setTimeout(() => {
-        setIsRolling(false);
-        remoteDiceRollTimerRef.current = null;
-      }, DICE_ROLL_DURATION_MS);
+    if (message.t === "DICE_ROLL_ANIMATING") {
+      triggerDiceRollAnimation(message);
       return;
     }
 
@@ -257,6 +271,11 @@ export function useGameState(initialProfile) {
   };
 
   const applyRemoteSnapshot = (snapshot) => {
+    if (!Number.isInteger(snapshot.stateVersion) ||
+      snapshot.stateVersion <= lastAppliedVersionRef.current) {
+      return;
+    }
+    lastAppliedVersionRef.current = snapshot.stateVersion;
     const normalized = {
       ...snapshot,
       room: snapshot.room ? { ...snapshot.room, online: true } : snapshot.room
@@ -274,10 +293,12 @@ export function useGameState(initialProfile) {
     }
     if (normalized.selectedState) setSelectedState(normalized.selectedState);
     if (normalized.properties) setProperties(normalized.properties);
-    if (Number.isInteger(normalized.turnSeat)) setTurnSeat(normalized.turnSeat);
+    if (!pendingActionRef.current && Number.isInteger(normalized.turnSeat)) setTurnSeat(normalized.turnSeat);
     if (normalized.turnPhase) setTurnPhase(normalized.turnPhase);
-    if (normalized.dice) setDice(normalized.dice);
-    if (Number.isInteger(normalized.round)) setRound(normalized.round);
+    if (normalized.dice && Date.now() >= remoteRollAnimationEndsAtRef.current) {
+      setDice(normalized.dice);
+    }
+    if (!pendingActionRef.current && Number.isInteger(normalized.round)) setRound(normalized.round);
     if (normalized.timeRemaining !== undefined) setTimeRemaining(normalized.timeRemaining);
     if (normalized.logs) setLogs(normalized.logs);
     if (normalized.messages) setMessages(normalized.messages);
@@ -318,7 +339,8 @@ export function useGameState(initialProfile) {
       timeRemaining,
       logs,
       messages,
-      festivals
+      festivals,
+      stateVersion: lastAppliedVersionRef.current
     };
     const serialized = JSON.stringify(snapshot);
     if (serialized === lastAppliedSnapshotRef.current) {
@@ -377,6 +399,9 @@ export function useGameState(initialProfile) {
   // Create room
   const createRoom = async ({ seats, matchLength, missLimit, selectedState: chosenState }) => {
     remotePositionsInitializedRef.current = false;
+    lastAppliedVersionRef.current = 0;
+    lastAppliedSnapshotRef.current = "";
+    pendingActionRef.current = null;
     consecutiveDoublesRef.current = 0;
     setExtraRolls(0);
     const code = Math.random().toString(36).slice(2, 8).padEnd(6, "0").toUpperCase();
@@ -446,6 +471,9 @@ export function useGameState(initialProfile) {
   // Join room
   const joinRoom = async (rawCode) => {
     remotePositionsInitializedRef.current = false;
+    lastAppliedVersionRef.current = 0;
+    lastAppliedSnapshotRef.current = "";
+    pendingActionRef.current = null;
     consecutiveDoublesRef.current = 0;
     setExtraRolls(0);
     const code = String(rawCode || "").trim().toUpperCase();
@@ -564,6 +592,7 @@ export function useGameState(initialProfile) {
 
   const leaveRoom = () => {
     remotePositionsInitializedRef.current = false;
+    pendingActionRef.current = null;
     consecutiveDoublesRef.current = 0;
     setExtraRolls(0);
     roomSyncEnabledRef.current = false;
@@ -709,17 +738,22 @@ export function useGameState(initialProfile) {
     const sum = d1 + d2;
     const isDoubles = d1 === d2;
     const activeRoom = roomRef.current;
+    const rollId = `${mySeat}-${Date.now()}-${++rollIdRef.current}`;
+    pendingActionRef.current = { rollId, turnSeat, round };
+    triggerDiceRollAnimation({ rollId, dice: [d1, d2] });
 
     if (activeRoom?.online && roomConnectionRef.current) {
       const sent = roomConnectionRef.current.send({
-        t: "diceRolled",
+        t: "DICE_ROLL_ANIMATING",
         code: activeRoom.code,
-        dice: [d1, d2]
+        playerId: activeRoom.players[turnSeat]?.id,
+        dice: [d1, d2],
+        rollId
       });
       if (!sent) setConnectionError("Could not broadcast the dice roll. Reconnecting to the room…");
     }
 
-    remoteRollAnimationEndsAtRef.current = Date.now() + DICE_ROLL_DURATION_MS;
+    remoteRollAnimationEndsAtRef.current = Date.now() + REMOTE_MOVE_DELAY_MS;
     setDice([d1, d2]);
     setIsTurnResolving(true);
     setIsRolling(true);
@@ -732,6 +766,7 @@ export function useGameState(initialProfile) {
       scheduleSequenceTimeout(() => {
         const currentPlayer = roomRef.current?.players[turnSeat];
         if (!currentPlayer || currentPlayer.bankrupt) {
+          pendingActionRef.current = null;
           setIsTurnResolving(false);
           return;
         }
@@ -749,6 +784,7 @@ export function useGameState(initialProfile) {
           const message = "3rd Double in a row! Move cancelled, turn ends.";
           addLog(`${currentPlayer.name}${currentPlayer.isBot ? " (Bot)" : ""}: ${message}`, { isBad: true });
           showToast(message, "error");
+          pendingActionRef.current = null;
           setIsTurnResolving(false);
           endTurnRef.current?.();
           return;
@@ -789,6 +825,7 @@ export function useGameState(initialProfile) {
               next[turnSeat] = { ...currentPlayer, jail: remaining };
               return { ...prev, players: next };
             });
+            pendingActionRef.current = null;
             setTurnPhase("action");
             setIsTurnResolving(false);
           }
@@ -803,7 +840,11 @@ export function useGameState(initialProfile) {
   // ─── Move player: update logical state immediately, kick off visual animation
   const movePlayer = (seat, steps, playerOverride = null) => {
     const player = playerOverride || roomRef.current?.players[seat];
-    if (!player) return;
+    if (!player) {
+      pendingActionRef.current = null;
+      return;
+    }
+    pendingActionRef.current = null;
 
     const bSpaces = boardSpacesRef.current;
     const oldPos = player.position;
@@ -1852,7 +1893,7 @@ export function useGameState(initialProfile) {
     isRolling,
     isTurnResolving,
     isMoving,         // true while piece is animating
-    renderedPositions, // { [playerId]: tileIndex } used for all rendered token positions
+    visualPositions, // { [playerId]: tileIndex } used for all rendered token positions
     activeHopState,   // { seat, hopY, scaleY } | null — live arc for active token
     properties,
     round,

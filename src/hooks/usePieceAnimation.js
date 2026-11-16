@@ -25,7 +25,7 @@
  *   anim.teleport(seat, pos)                 – instant snap (jail, chance)
  *   anim.initPositions(players)             – reset on match start
  *
- *   anim.renderedPositions  { [playerId]: number } — tile index to render at
+ *   anim.visualPositions  { [playerId]: number } — tile index to render at
  *   anim.activeHopState     { seat, hopY, scaleY } | null  — live transform for active token
  *   anim.isMoving           boolean
  */
@@ -63,7 +63,7 @@ export function usePieceAnimation({
 } = {}) {
 
   // Player-ID positions are the only rendered source for token coordinates.
-  const [renderedPositions, setRenderedPositions] = useState({});
+  const [visualPositions, setVisualPositions] = useState({});
 
   // Live hop transform — only exists while ONE seat is animating
   // Shape: { seat: number, hopY: number, scaleY: number } | null
@@ -78,7 +78,7 @@ export function usePieceAnimation({
   const renderedPositionsRef = useRef({});
   const plannedPositionsRef = useRef({});
   const playerKeysRef = useRef({});
-  const animatingPlayersRef = useRef({});
+  const isAnimatingRef = useRef({});
   const queueRef = useRef([]);
   const activeJobRef = useRef(null);
   const animationGenerationRef = useRef(0);
@@ -86,7 +86,7 @@ export function usePieceAnimation({
   const updateRenderedPosition = useCallback((playerId, position) => {
     const normalizedPosition = ((position % boardSize) + boardSize) % boardSize;
     renderedPositionsRef.current = { ...renderedPositionsRef.current, [playerId]: normalizedPosition };
-    setRenderedPositions(renderedPositionsRef.current);
+    setVisualPositions(renderedPositionsRef.current);
   }, [boardSize]);
 
   const getRenderedPosition = useCallback((playerId) => renderedPositionsRef.current[playerId], []);
@@ -100,7 +100,7 @@ export function usePieceAnimation({
     timerRef.current = null;
     queueRef.current = [];
     activeJobRef.current = null;
-    animatingPlayersRef.current = {};
+    isAnimatingRef.current = {};
   }, []);
 
   // ── Squish phase: plays on landing of every hop ──────────────────────────────
@@ -130,7 +130,7 @@ export function usePieceAnimation({
   }
 
   // ── Single hop: arc from current tile to next tile position ─────────────────
-  // After arc finishes, advances renderedPositions[playerId] then runs squish.
+  // After arc finishes, advances visualPositions[playerId] then runs squish.
   function runHop(seat, playerId, fromPos, nextPos, dur, onHopEnd) {
     const start = performance.now();
     const fromCenter = getTileCenterCoordinates?.(fromPos);
@@ -180,7 +180,7 @@ export function usePieceAnimation({
         updateRenderedPosition(job.playerId, job.position);
         setActiveHopState(null);
         activeJobRef.current = null;
-        animatingPlayersRef.current[job.playerId] =
+        isAnimatingRef.current[job.playerId] =
           queueRef.current.some((queuedJob) => queuedJob.playerId === job.playerId);
         if (queueRef.current.length) startNextJob();
         else setIsMoving(false);
@@ -196,7 +196,7 @@ export function usePieceAnimation({
     function finishJob() {
       activeJobRef.current = null;
       if (job.notifyMoveDone) onMoveDone?.(job.seat, job.path[job.path.length - 1]);
-      animatingPlayersRef.current[job.playerId] =
+      isAnimatingRef.current[job.playerId] =
         queueRef.current.some((queuedJob) => queuedJob.playerId === job.playerId);
       if (queueRef.current.length) {
         startNextJob();
@@ -273,7 +273,7 @@ export function usePieceAnimation({
       ...plannedPositionsRef.current,
       [playerId]: normalizedPath[normalizedPath.length - 1]
     };
-    animatingPlayersRef.current[playerId] = true;
+    isAnimatingRef.current[playerId] = true;
     startNextJob();
   }, [boardSize, startNextJob]);
 
@@ -308,7 +308,7 @@ export function usePieceAnimation({
         delayMs: Math.max(0, delayMs)
       });
       plannedPositionsRef.current = { ...plannedPositionsRef.current, [playerId]: target };
-      animatingPlayersRef.current[playerId] = true;
+      isAnimatingRef.current[playerId] = true;
       startNextJob();
       return;
     }
@@ -346,17 +346,17 @@ export function usePieceAnimation({
     playerKeysRef.current = playerKeys;
     renderedPositionsRef.current = positions;
     plannedPositionsRef.current = { ...positions };
-    setRenderedPositions(positions);
+    setVisualPositions(positions);
   }, [boardSize, cancelAll]);
 
   return {
-    renderedPositions,
+    visualPositions,
     activeHopState,   // { seat, hopY, scaleY } | null
     isMoving,
     animateMove,
     animateToPosition,
     getRenderedPosition,
-    animatingPlayersRef,
+    isAnimatingRef,
     teleport,
     initPositions,
   };

@@ -31,6 +31,11 @@ const publicRoom = (room) => {
   return details;
 };
 
+function incrementStateVersion(room) {
+  room.stateVersion += 1;
+  return room.stateVersion;
+}
+
 // Helper to broadcast message to all clients in a room
 function broadcastToRoom(code, payload, excludedClient = null) {
   const room = rooms.get(code);
@@ -59,6 +64,7 @@ function createRoomRecord({ code, seats, minutes, missLimit, state, name, token,
     host: hostName,
     started: false,
     over: false,
+    stateVersion: 0,
     clients: new Set(),
     tokens: new Map([[0, hostAuthToken]]),
     players: Array.from({ length: Math.max(2, Math.min(6, Number(seats) || 4)) }, (_, seat) => (
@@ -236,6 +242,14 @@ wss.on('connection', (ws) => {
         room.players[seat] = newPlayer;
         room.tokens.set(seat, token);
         room.clients.add(ws);
+        const stateVersion = incrementStateVersion(room);
+        if (room.snapshot) {
+          room.snapshot = {
+            ...room.snapshot,
+            stateVersion,
+            room: { ...room.snapshot.room, stateVersion }
+          };
+        }
         userRoomCode = code;
         userSeat = seat;
 
@@ -251,6 +265,7 @@ wss.on('connection', (ws) => {
         broadcastToRoom(code, { t: 'playerJoined', player: newPlayer, room: publicRoom(room) }, ws);
         if (room.snapshot) {
           room.snapshot = { ...room.snapshot, room: publicRoom(room) };
+          room.snapshot.room.stateVersion = room.stateVersion;
           broadcastToRoom(code, { t: 'snapshot', state: room.snapshot }, ws);
         }
         return;
@@ -289,9 +304,10 @@ wss.on('connection', (ws) => {
       const room = rooms.get(code);
       if (!room || userRoomCode !== code) return;
 
-      if (data.t === 'diceRolled') {
+      if (data.t === 'DICE_ROLL_ANIMATING' || data.t === 'diceRolled') {
         const dice = data.dice;
         const activeSeat = Number.isInteger(room.snapshot?.turnSeat) ? room.snapshot.turnSeat : 0;
+        const rollId = typeof data.rollId === 'string' ? data.rollId.trim() : '';
         if (!room.started ||
           (userSeat !== activeSeat && userSeat !== 0)) {
           sendError(data.requestId, 'Only the active player or host can broadcast a dice roll.');
@@ -303,13 +319,20 @@ wss.on('connection', (ws) => {
           return;
         }
 
+        if (!rollId || rollId.length > 128) {
+          sendError(data.requestId, 'Invalid dice roll identifier.');
+          return;
+        }
+
         broadcastToRoom(code, {
-          t: 'diceRolled',
+          t: 'DICE_ROLL_ANIMATING',
+          type: 'DICE_ROLL_ANIMATING',
           code,
           seat: activeSeat,
+          playerId: room.players[activeSeat]?.id,
           dice,
-          rollTimestamp: Date.now()
-        }, ws);
+          rollId
+        });
         return;
       }
 
@@ -328,17 +351,20 @@ wss.on('connection', (ws) => {
         }
         room.started = room.started || Boolean(data.state.room?.started);
         room.over = room.over || Boolean(data.state.room?.over);
+        const stateVersion = incrementStateVersion(room);
         room.snapshot = {
           ...data.state,
+          stateVersion,
           room: { ...data.state.room, code, started: room.started, over: room.over }
         };
+        room.snapshot.room.stateVersion = stateVersion;
         if (Array.isArray(room.snapshot.room.players)) {
           room.players = room.snapshot.room.players;
           room.players.forEach((player, seat) => {
             if (!player) room.tokens.delete(seat);
           });
         }
-        broadcastToRoom(code, { t: 'snapshot', state: room.snapshot }, ws);
+        broadcastToRoom(code, { t: 'snapshot', state: room.snapshot });
         return;
       }
 
@@ -348,8 +374,15 @@ wss.on('connection', (ws) => {
           return;
         }
         room.started = true;
-        if (room.snapshot) room.snapshot.room.started = true;
-        broadcastToRoom(code, { t: 'snapshot', state: room.snapshot }, ws);
+        const stateVersion = incrementStateVersion(room);
+        if (room.snapshot) {
+          room.snapshot = {
+            ...room.snapshot,
+            stateVersion,
+            room: { ...room.snapshot.room, started: true, stateVersion }
+          };
+        }
+        broadcastToRoom(code, { t: 'snapshot', state: room.snapshot });
       }
     } catch (err) {
       sendError(data?.requestId, err.message || 'Room request failed.');

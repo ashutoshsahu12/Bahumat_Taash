@@ -77,7 +77,7 @@ html, body {
   box-sizing: border-box;
   transform-style: preserve-3d;
   will-change: transform;
-  transition: transform 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Solid White 3D Cube Faces with Beveling & Inset Lighting */
