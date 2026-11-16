@@ -17,7 +17,6 @@ import AvatarCustomizerModal from "./components/AvatarCustomizerModal";
 import WhatsNewModal from "./components/WhatsNewModal";
 import GameOverModal from "./components/GameOverModal";
 import Toaster from "./components/Toaster";
-import { MessageSquare } from "lucide-react";
 import { formatRupee } from "./data/constants";
 import { useGameState } from "./hooks/useGameState";
 import { playSound } from "./audio/soundEngine";
@@ -94,7 +93,6 @@ export default function App() {
     mineAction,
     mineLevel,
     payJailBail,
-    useJailCard,
     applyChanceCard,
     sendMessage,
     proposeTrade,
@@ -183,7 +181,7 @@ export default function App() {
             />
           </div>
           {(room.offline ? connectionError : connectionError || connectionStatus !== "connected") && (
-            <p className="w-full rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-center text-xs text-amber-200" role="status">
+            <p className="game-connection-banner w-full rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-center text-xs text-amber-200" role="status">
               {connectionError || "Connecting to the room…"}
             </p>
           )}
@@ -194,6 +192,7 @@ export default function App() {
             registerTileCenterGetter={registerTileCenterGetter}
             players={room.players.filter(Boolean)}
             properties={properties}
+            room={room}
             selectedTile={selectedTileId}
             isTurnResolving={isTurnResolving || isActionModalActive}
             isMoving={isMoving}
@@ -202,6 +201,7 @@ export default function App() {
             festivals={festivals}
             onSelectTile={(id) => setSelectedTileId(id)}
             onOpenMarket={() => setIsMarketOpen(true)}
+            onOpenChat={() => setIsChatOpen(true)}
             onOpenChance={() => {
               const card = {
                 title: "Village Festival",
@@ -241,27 +241,11 @@ export default function App() {
             onOpenSell={() => setIsSellOpen(true)}
             onOpenMine={() => setIsMineOpen(true)}
             onPayJailBail={payJailBail}
-            onUseJailCard={useJailCard}
           />
 
           {/* Live Activity Feed and Chat */}
           <div className="game-activity-row flex w-full min-w-0 flex-row items-center gap-2">
             <ActivityTicker logs={logs} />
-            <button
-              type="button"
-              aria-label="Open chat"
-              className="gbtn sm blue flex shrink-0 items-center gap-1 whitespace-nowrap"
-              onClick={() => {
-                playSound("click");
-                setIsChatOpen(true);
-              }}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden min-[380px]:inline">Chat</span>
-              {messages.length > 0 && (
-                <span className="ml-0.5 h-2 w-2 animate-pulse rounded-full bg-amber-400" />
-              )}
-            </button>
           </div>
         </main>
       )}

@@ -62,11 +62,9 @@ export default function Tile({
       {/* ── Visual Property Ownership Badge (Instant update on Buy/Trade/Sell) ── */}
       {hasOwnerBadge && (
         <span
-          className="tile-owner-badge rounded-full px-1.5 py-0.5 border border-white/60 text-white font-extrabold flex items-center gap-0.5"
+          className="tile-owner-badge rounded-full border border-white/60 text-white font-extrabold flex items-center justify-center"
           style={{
-            backgroundColor: effectiveOwnerColor,
-            fontSize: "calc(1.9 * var(--u, 4px))",
-            lineHeight: 1
+            backgroundColor: effectiveOwnerColor
           }}
           title={`Owned by ${ownerPlayer?.name || "Player"}`}
         >

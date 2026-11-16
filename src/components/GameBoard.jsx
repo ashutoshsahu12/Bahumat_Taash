@@ -3,7 +3,7 @@ import Tile from "./Tile";
 import PieceToken from "./PieceToken";
 import { BOARD_SPACES, getTileGridArea, getPositionPercent } from "../data/boardData";
 import { LogoCrown } from "./Icons";
-import { CircleHelp, TrendingUp } from "lucide-react";
+import { CircleHelp, LockKeyhole, MessageCircle, Plus, TrendingUp, X } from "lucide-react";
 import { playSound } from "../audio/soundEngine";
 import { GAME_CONSTANTS, formatRupee } from "../data/constants";
 
@@ -109,15 +109,18 @@ export default function GameBoard({
   renderedPositions = {},  // { [playerId]: tileIndex } — local render position, independent of server state
   activeHopState   = null, // { seat, hopY, scaleY } | null  — only the active token
   festivals = [],
+  room = null,
   registerTileCenterGetter,
   onSelectTile,
   onOpenMarket,
-  onOpenChance
+  onOpenChance,
+  onOpenChat
 }) {
   const boardAreaRef = useRef(null);
   const boardBoxRef = useRef(null);
   const tileCentersRef = useRef({});
   const [tileCenters, setTileCenters] = useState({});
+  const [isRoomInfoOpen, setIsRoomInfoOpen] = useState(false);
 
   const getTileCenterCoordinates = useCallback((tileIndex) => {
     const cachedCenter = tileCentersRef.current[tileIndex];
@@ -229,6 +232,68 @@ export default function GameBoard({
 
           {/* Center Sky & Inner Arena */}
           <div className="centre">
+            <div className="overlay board-utility-icons" aria-label="Room utilities">
+              <button
+                type="button"
+                className="board-utility-button"
+                aria-label="Open table chat"
+                onClick={() => {
+                  playSound("click");
+                  onOpenChat?.();
+                }}
+              >
+                <MessageCircle aria-hidden="true" />
+                <span className="board-utility-plus" aria-hidden="true">
+                  <Plus />
+                </span>
+              </button>
+              <button
+                type="button"
+                className="board-utility-button"
+                aria-label="Toggle room details"
+                aria-expanded={isRoomInfoOpen}
+                aria-controls="board-room-details"
+                onClick={() => {
+                  playSound("click");
+                  setIsRoomInfoOpen((open) => !open);
+                }}
+              >
+                <LockKeyhole aria-hidden="true" />
+              </button>
+            </div>
+
+            {isRoomInfoOpen && (
+              <section
+                id="board-room-details"
+                className="overlay board-room-popover"
+                role="dialog"
+                aria-label="Room details"
+              >
+                <header className="flex items-center justify-between gap-2">
+                  <strong>Room details</strong>
+                  <button
+                    type="button"
+                    aria-label="Close room details"
+                    onClick={() => setIsRoomInfoOpen(false)}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                </header>
+                <p>
+                  <span>Status</span>
+                  <b>{room?.online ? "Online multiplayer" : "Offline vs AI"}</b>
+                </p>
+                <p>
+                  <span>Room</span>
+                  <b>{room?.code || "Local game"}</b>
+                </p>
+                <p>
+                  <span>Players</span>
+                  <b>{players.length}{room?.seats ? ` / ${room.seats}` : ""}</b>
+                </p>
+              </section>
+            )}
+
             {/* Stars & Shooting Stars */}
             <span className="stars" aria-hidden="true">
               <i className="shoot" />
