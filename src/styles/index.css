@@ -195,38 +195,47 @@ html, body {
 /* ── Visual Property Ownership Badges on Tiles ───────────────────────────────── */
 .tile-owner-badge {
   position: absolute;
-  z-index: 6;
+  inset: auto;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
   animation: badgePopIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 @keyframes badgePopIn {
-  0% { transform: scale(0); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
-/* Keep ownership badges on the edge facing the board center. */
+/* Let owned tiles expose their badges into the inner board canvas. */
+.bb .tile.has-owner-badge {
+  overflow: visible;
+}
+
 .tile.s-bottom .tile-owner-badge {
-  top: 1px;
-  right: 1px;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .tile.s-top .tile-owner-badge {
-  bottom: 1px;
-  right: 1px;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .tile.s-left .tile-owner-badge {
-  top: 1px;
-  right: 1px;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
 }
 
 .tile.s-right .tile-owner-badge {
-  top: 1px;
-  left: 1px;
+  top: 50%;
+  right: calc(100% + 6px);
+  transform: translateY(-50%);
 }
 
 html,
@@ -315,4 +324,9 @@ body,
     margin-bottom: 2px;
     padding-bottom: 2px;
   }
+}
+
+.bb {
+  height: 100dvh;
+  overflow: hidden;
 }

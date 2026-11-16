@@ -29,6 +29,7 @@ export default function Tile({
   const effectiveOwnerColor = ownerPlayer?.color || ownerColor;
   const ownerInitial = (ownerPlayer?.name?.[0] || "").toUpperCase();
   const isOwned = Boolean(propertyState && propertyState.owner !== undefined && effectiveOwnerColor);
+  const hasOwnerBadge = isOwned && price !== undefined;
 
   const handleClick = () => {
     playSound("click");
@@ -49,6 +50,7 @@ export default function Tile({
         isVillage ? "village" : "",
         hasFestival ? "festival" : "",
         isLaunching && id === 0 ? "go" : "",
+        hasOwnerBadge ? "has-owner-badge" : "",
         name.length > 8 ? "long" : ""
       ].filter(Boolean).join(" ")}
       style={{ gridArea: `${row} / ${col}` }}
@@ -58,9 +60,9 @@ export default function Tile({
       onClick={handleClick}
     >
       {/* ── Visual Property Ownership Badge (Instant update on Buy/Trade/Sell) ── */}
-      {isOwned && price !== undefined && (
+      {hasOwnerBadge && (
         <span
-          className="tile-owner-badge rounded-full px-1.5 py-0.5 border border-white/60 text-white font-extrabold flex items-center gap-0.5 shadow-md"
+          className="tile-owner-badge rounded-full px-1.5 py-0.5 border border-white/60 text-white font-extrabold flex items-center gap-0.5"
           style={{
             backgroundColor: effectiveOwnerColor,
             fontSize: "calc(1.9 * var(--u, 4px))",
