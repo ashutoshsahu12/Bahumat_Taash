@@ -338,6 +338,10 @@ body,
   width: 100vw;
   height: 100dvh;
   overflow: hidden;
+  background-image: url("/images/background.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .bb .centre {
